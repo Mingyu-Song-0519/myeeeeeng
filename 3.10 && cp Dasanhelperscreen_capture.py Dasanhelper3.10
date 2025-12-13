@@ -1,0 +1,15 @@
+{
+  "ocr_mode": true,
+  "message_template": "안녕하세요 선생님,\n첫 치료 영상을 저장하였습니다.\n확인 부탁드립니다.\n감사합니다.",
+  "hotkey": "ctrl+shift+a",
+  "detection": {
+    "window_title_keywords": ["EMR", "전자의무기록", "차트"],
+    "check_interval_seconds": 1
+  },
+  "auto_input": {
+    "typing_interval": 0.05,
+    "click_before_type": true
+  },
+  "auto_type_after_extraction": true,
+  "debug_mode": false
+}

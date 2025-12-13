@@ -1,0 +1,186 @@
+====================================
+EMR Helper v2.0.4 최종 수정사항
+====================================
+
+배포 파일: EMR_Helper_v2.0.4_최종.zip
+파일 크기: 215 MB
+SHA256: E1AC3672B1A141B7B4E9BC5C148D526E326836AF7EF29A3F13A63A386BF4BD2B
+빌드 날짜: 2024-12-12
+
+====================================
+🐛 주요 버그 수정 (최종)
+====================================
+
+1. 치료부위 인식 오류 해결 (Critical Fix)
+
+   문제:
+   - "Rt thigh" → "LIVER"로 오인식
+   - "Lt Pleura" → "LIVER"로 오인식
+   - THIGH, PLEURA 등 부위 미지원
+
+   원인:
+   - THIGH, PLEURA가 인식 부위 목록에 없음
+   - Rt/Lt (우/좌) 접두사 처리 로직 없음
+   - LIVER가 먼저 매칭되어 다른 부위 무시
+
+   해결:
+   ✅ Pattern 0 추가 (최우선 순위)
+      - Rt/Lt + 부위명 복합 패턴 감지
+      - 정규식: r'\b((?:Rt|Lt|Right|Left)\s+[A-Za-z]+)\b'
+      - "Rt thigh" → "RT_THIGH" 정확히 인식
+      - "Lt Pleura" → "LT_PLEURA" 정확히 인식
+
+   ✅ 누락 치료부위 20+ 추가
+      - THIGH (대퇴부), PLEURA (흉막)
+      - 뼈 부위: FEMUR, TIBIA, FIBULA, HUMERUS, RADIUS, ULNA
+      - SCAPULA, CLAVICLE, STERNUM, RIBS, ORBIT
+      - MAXILLA, MANDIBLE, SACRUM, COCCYX
+      - ILIUM, ISCHIUM, PUBIS
+
+   ✅ 패턴 우선순위 재설계
+      - Pattern 0 (최우선): Rt/Lt 복합 부위
+      - Pattern 1: 전체 라인 매칭
+      - Pattern 2: FINAL 키워드 후 부위
+      - Pattern 3: common_sites 리스트
+
+   ✅ 디버그 기능 추가
+      - patient_info에 '_ocr_raw_text' 필드 추가
+      - OCR 원본 텍스트 확인 가능
+      - 인식 오류 추적 용이
+
+2. ROI 초기화 단축키 충돌 해결
+
+   문제:
+   - Ctrl+Shift+C 누르면 프로그램 종료
+
+   원인:
+   - Ctrl+C (프로그램 중단 시그널)와 충돌
+
+   해결:
+   ✅ Ctrl+Shift+C → Ctrl+Shift+D 변경
+   ✅ keyboard.add_hotkey에 suppress=False 추가
+   ✅ 모든 문서 업데이트 (배포정보, ROI_설정방법 등)
+
+3. 프로그램 지속 실행 보장
+
+   문제:
+   - 한 번 OCR 실행 후 프로그램 종료
+
+   원인:
+   - 작업 완료 후 상태 메시지 부족
+   - 사용자가 프로그램 종료로 오해
+
+   해결:
+   ✅ 모든 작업 후 상태 메시지 추가
+      - OCR 완료: "✅ 완료! 프로그램은 계속 실행 중입니다."
+      - ROI 설정: "프로그램은 계속 실행 중입니다."
+      - ROI 초기화: "프로그램은 계속 실행 중입니다."
+      - 창 검증 실패: "프로그램은 계속 실행 중입니다. ESC를 눌러 종료하세요."
+
+====================================
+📝 코드 변경 사항
+====================================
+
+ocr_extractor.py:
+- _extract_treatment_site() 메서드 수정
+  * Pattern 0 추가 (Rt/Lt 복합 부위 감지)
+  * common_sites 리스트에 20+ 부위 추가
+  * 우선순위 재설계
+- extract_patient_info() 메서드 수정
+  * '_ocr_raw_text' 필드 추가
+
+main.py:
+- on_hotkey_clear_roi() 단축키 변경
+  * 'ctrl+shift+c' → 'ctrl+shift+d'
+- keyboard.add_hotkey() 호출 수정
+  * suppress=False 파라미터 추가
+- 모든 핸들러에 상태 메시지 추가
+  * on_hotkey_ocr()
+  * on_hotkey_set_roi()
+  * on_hotkey_clear_roi()
+
+====================================
+📊 지원 치료부위 (70+종)
+====================================
+
+✅ 좌우 구분 지원 (신규):
+   - Rt/Lt + 모든 부위명
+   - Right/Left 표기 지원
+   - 예: Rt thigh, Lt pleura, Rt femur
+
+주요 장기 (기존):
+   BREAST, PROSTATE, RECTUM, PELVIS, LIVER, LUNG,
+   BRAIN, SPINE, ESOPHAGUS, STOMACH, PANCREAS,
+   CERVIX, UTERUS, BLADDER, KIDNEY
+
+신규 추가 (20+):
+   THIGH, PLEURA, FEMUR, TIBIA, FIBULA, HUMERUS,
+   RADIUS, ULNA, SCAPULA, CLAVICLE, STERNUM, RIBS,
+   ORBIT, MAXILLA, MANDIBLE, SACRUM, COCCYX,
+   ILIUM, ISCHIUM, PUBIS
+
+폐 세부 (기존):
+   RLL, LLL, RUL, LUL, RML
+
+두경부 (기존):
+   NASOPHARYNX, OROPHARYNX, HYPOPHARYNX,
+   LARYNX, TONGUE, THYROID
+
+척추 (기존):
+   C-SPINE, T-SPINE, L-SPINE
+
+====================================
+🎯 테스트 결과
+====================================
+
+✅ "Rt thigh" → "RT_THIGH" 정확히 인식
+✅ "Lt Pleura" → "LT_PLEURA" 정확히 인식
+✅ LIVER 오인식 문제 해결
+✅ ROI 초기화 단축키 정상 작동 (Ctrl+Shift+D)
+✅ 프로그램 지속 실행 확인
+✅ 모든 기존 기능 정상 작동
+
+====================================
+⌨️ 단축키 (최종)
+====================================
+
+Ctrl+Shift+A : OCR 실행 (메시지 생성)
+Ctrl+Shift+R : ROI 설정
+Ctrl+Shift+D : ROI 초기화 (변경됨!)
+ESC          : 프로그램 종료
+
+====================================
+📦 배포 패키지 내용
+====================================
+
+EMR_Helper_v2.0.4_최종.zip 포함 파일:
+- EMR_Helper.exe (메인 실행 파일)
+- _internal/ (내부 리소스)
+  - config.json
+  - .EasyOCR/ (OCR 모델)
+  - Python DLL 및 라이브러리
+- README.md
+- USAGE_GUIDE.md
+- OPTIMIZATION_GUIDE.md
+- VERSION.txt (업데이트됨)
+- 빌드정보.txt (업데이트됨)
+- ROI_설정방법.txt (업데이트됨)
+- 창검증_설정방법.txt
+- 창제목_확인방법.txt
+
+====================================
+✅ 검증 완료
+====================================
+
+빌드: 성공
+SHA256: 생성 완료
+문서: 모두 업데이트
+테스트: 주요 기능 검증 완료
+상태: 배포 준비 완료
+
+====================================
+
+최종 수정일: 2024-12-12
+버전: v2.0.4 (최종)
+
+====================================

@@ -1,0 +1,160 @@
+====================================
+EMR Helper 수정사항 목록
+====================================
+
+수집 시작: 2024-12-12
+상태: 수정사항 수집 중
+
+====================================
+📝 수정사항
+====================================
+
+1. 치료부위 양쪽(both) 지원 추가
+   - 현재: Rt/Lt (Right/Left)만 지원
+   - 추가 필요: both (양쪽)
+   - 예시: "both thigh", "both pleura"
+   - 처리 방식: "Both_thigh", "Both_pleura" 형식으로 인식
+   - 수정 위치: ocr_extractor.py의 Pattern 0
+
+2. 치료부위 표기 방식 변경 (대소문자)
+   - 현재: 모두 대문자 (예: "RT_THIGH", "LIVER", "BREAST")
+   - 변경: 첫 글자만 대문자, 나머지 소문자
+   - 예시:
+     * "RT_THIGH" → "Rt_thigh"
+     * "LIVER" → "Liver"
+     * "BREAST" → "Breast"
+     * "NASOPHARYNX" → "Nasopharynx"
+     * "C-SPINE" → "C-spine"
+   - 수정 위치: ocr_extractor.py의 _extract_treatment_site() 전체
+   - 영향 범위: 모든 치료부위 반환값
+
+3. 선량/Fraction 인식 강화
+   - 현재 문제:
+     * Fx 수를 읽지 못하거나 선량만 인식
+     * 제한적인 패턴 (정확한 형식만 인식)
+
+   - 개선 사항:
+     A. 선량 (_extract_dose) 강화:
+        * 모든 대소문자 조합: Gy, gy, GY, gY
+        * cGy 단위 지원: 3960cGy → 39.6Gy 변환
+        * 숫자만 있는 경우: "39.6" (패턴 유추)
+        * 다양한 표기: "Total: 39.6Gy", "Dose 39.6 Gy", "39.6 gy"
+        * 소수점/정수 모두: 39.6, 33, 45.0
+
+     B. Fraction (_extract_fraction) 강화:
+        * 모든 대소문자 조합: Fx, fx, FX, fX
+        * 다양한 표기: "18Fx", "18 fx", "#18", "18회", "18fr", "18frac"
+        * 숫자만 있는 경우 처리
+        * 패턴: "Fraction: 18", "fx 18", "18 fractions"
+
+     C. 복합 표기 처리:
+        * "39.6Gy/18fx", "39.6Gy-18Fx", "39.6 Gy / 18 Fx"
+        * "39.6Gy 18회", "Total 39.6Gy in 18fx"
+
+     D. 최종 출력 형식 표준화:
+        * 항상 "39.6Gy/18Fx" 형식으로 통일
+        * 선량만 있으면: "39.6Gy"
+        * Fraction만 있으면: "18Fx"
+        * 둘 다 있으면: "39.6Gy/18Fx"
+
+   - 수정 위치: ocr_extractor.py
+     * _extract_dose() 메서드 전면 개선
+     * _extract_fraction() 메서드 전면 개선
+     * message_generator.py에서 출력 형식 통일
+
+4. 치료부위 목록 대폭 확장 (웹 조사 기반)
+   - 현재: 약 70개 부위
+   - 확장: 100+ 부위로 확대
+
+   A. 특수 대규모 조사(Large Field) 치료:
+      * TBI (Total Body Irradiation) - 전신 조사
+      * TSEI (Total Skin Electron Irradiation) - 전신 피부 전자선 조사
+      * HBI (Hemibody Irradiation) - 반신 조사
+        - UHBI (Upper Hemibody Irradiation)
+        - LHBI (Lower Hemibody Irradiation)
+      * TMI (Total Marrow Irradiation) - 전골수 조사
+      * TMLI (Total Marrow and Lymphoid Irradiation) - 전골수 및 림프 조사
+      * TLI (Total Lymphoid Irradiation) - 전림프 조사
+      * TNI (Total Nodal Irradiation) - 전림프절 조사
+
+   B. 두경부(Head & Neck) 세분화:
+      * Paranasal sinuses (부비동)
+      * Nasal cavity (비강)
+      * Nasal vestibule (비전정)
+      * Oral cavity (구강)
+      * Supraglottic larynx (성문상부)
+      * Vocal cord (성대)
+      * Parotid glands (이하선)
+      * Paragangliomas (부신경절종)
+      * Unknown primary (원발부위 불명)
+
+   C. 복부(Abdomen) 추가:
+      * Gallbladder (담낭)
+      * Small bowel (소장)
+      * Colon (결장)
+      * Extrahepatic biliary tree (간외담도)
+      * Retroperitoneum (후복막)
+
+   D. 골반(Pelvis) 추가:
+      * Ovary (난소)
+      * Testis (고환)
+      * Vagina (질)
+      * Vulva (외음부)
+      * Penis (음경)
+
+   E. 사지 및 연부조직:
+      * Upper limb (상지)
+      * Lower limb (하지)
+      * Soft tissue (연부조직)
+      * Sarcoma (육종)
+
+   F. 기타 부위:
+      * TAO (Thyroid-Associated Ophthalmopathy) - 갑상선 관련 안병증
+      * Eye/Orbit (안구/안와)
+      * Pituitary (뇌하수체)
+      * Acoustic neuroma (청신경종양)
+      * Mediastinum (종격동)
+      * Pleural cavity (흉막강)
+      * Peritoneum (복막)
+      * Skin (피부)
+      * Lymph nodes (림프절 - 각 부위별)
+
+   - 참고 출처:
+     * OzRadOnc Anatomy Database
+     * Wikibooks Radiation Oncology/Anatomy
+     * EviCore/Cigna Radiation Oncology Guidelines 2025
+     * University of Iowa Radiation Therapy Textbook
+
+   - 수정 위치: ocr_extractor.py의 common_sites 리스트 전면 확장
+
+5. SBRT 환자 메시지 마무리 멘트 변경
+   - 현재: 모든 경우 동일
+     "첫 치료 영상 저장했습니다.
+      Offline review 확인 부탁드립니다~"
+
+   - 변경:
+     A. SBRT 환자인 경우:
+        "첫 치료 영상 저장했습니다.
+         혹시 지금 오실 수 있으신가요?"
+
+     B. 일반 환자인 경우 (기존 유지):
+        "첫 치료 영상 저장했습니다.
+         Offline review 확인 부탁드립니다~"
+
+   - 이유: SBRT는 직접 확인이 필요하므로 다른 표현 사용
+
+   - 수정 위치: message_generator.py
+     * generate_message() 메서드에서 rt_method 확인하여 분기 처리
+
+====================================
+✅ 완료된 작업
+====================================
+
+1. v2.0.4 최종 빌드 완료
+   - 치료부위 인식 버그 수정 (Rt thigh, Lt Pleura)
+   - ROI 초기화 단축키 변경 (Ctrl+Shift+D)
+   - 프로그램 지속 실행 보장
+
+====================================
+
+업데이트: 2024-12-12

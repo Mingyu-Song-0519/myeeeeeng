@@ -1,0 +1,183 @@
+"""
+OCR을 통한 EMR 정보 추출 모듈
+"""
+
+import re
+import cv2
+import numpy as np
+from typing import Dict, Optional
+
+
+class EMRDataExtractor:
+    def __init__(self):
+        """OCR 초기화"""
+        import easyocr
+        # 한글과 영어 지원
+        self.reader = easyocr.Reader(['ko', 'en'], gpu=False)
+
+    def extract_text_from_image(self, image):
+        """이미지에서 텍스트 추출
+
+        Args:
+            image: numpy array 이미지
+
+        Returns:
+            list: [(텍스트, 좌표), ...]
+        """
+        results = self.reader.readtext(image)
+        return [(text, bbox) for bbox, text, conf in results]
+
+    def extract_patient_info(self, image):
+        """환자 정보 추출
+
+        Args:
+            image: 캡처된 EMR 화면 이미지
+
+        Returns:
+            dict: 추출된 정보
+        """
+        # OCR로 텍스트 추출
+        ocr_results = self.reader.readtext(image)
+
+        # 텍스트만 추출
+        all_text = ' '.join([text for _, text, _ in ocr_results])
+
+        # 정보 추출
+        info = {
+            'patient_id': self._extract_patient_id(all_text),
+            'patient_name': self._extract_patient_name(ocr_results),
+            'treatment_room': self._extract_treatment_room(all_text),
+            'team': self._extract_team(all_text),
+            'treatment_site': self._extract_treatment_site(all_text),
+            'dose': self._extract_dose(all_text),
+            'fraction': self._extract_fraction(all_text),
+            'rt_method': self._extract_rt_method(all_text),
+            'is_rf': self._check_rf(all_text),
+            'image_guide': self._extract_image_guide(all_text),
+            'gating': self._extract_gating(all_text)
+        }
+
+        return info
+
+    def _extract_patient_id(self, text):
+        """환자 등록번호 추출 (8자리 숫자)"""
+        # 71046541 형식
+        match = re.search(r'\b(\d{8})\b', text)
+        return match.group(1) if match else None
+
+    def _extract_patient_name(self, ocr_results):
+        """환자 이름 추출"""
+        # 등록번호 바로 다음에 나오는 한글 텍스트
+        # 또는 특정 위치의 한글 이름
+        for i, (bbox, text, conf) in enumerate(ocr_results):
+            # 8자리 숫자 다음에 나오는 한글
+            if re.match(r'\d{8}', text):
+                if i + 1 < len(ocr_results):
+                    next_text = ocr_results[i + 1][1]
+                    # 한글 이름 패턴
+                    if re.match(r'^[가-힣]{2,4}$', next_text):
+                        return next_text
+
+        # 대체 방법: Overall 위쪽의 한글 이름 찾기
+        for bbox, text, conf in ocr_results:
+            if re.match(r'^[가-힣]{2,4}$', text) and conf > 0.5:
+                return text
+
+        return None
+
+    def _extract_treatment_room(self, text):
+        """치료실 번호 추출 (2TR -> 2치료실)"""
+        match = re.search(r'(\d+)TR', text)
+        if match:
+            room_num = match.group(1)
+            return f"{room_num}치료실"
+        return None
+
+    def _extract_team(self, text):
+        """팀 정보 추출 (A~Z팀)"""
+        # "Z팀", "A 팀", "2TR Z" 등의 패턴
+        match = re.search(r'\b([A-Z])팀', text)
+        if match:
+            return f"{match.group(1)}팀"
+
+        # "2TR 다음에 나오는 알파벳" 패턴
+        match = re.search(r'\d+TR[^\w]*([A-Z])\b', text)
+        if match:
+            return f"{match.group(1)}팀"
+
+        return None
+
+    def _extract_treatment_site(self, text):
+        """치료 부위 추출 (RLL, LLL 등)"""
+        # Overall 라인에서 추출
+        # "Overall RLL:" 또는 "RLL: 39.6Gy" 패턴
+        match = re.search(r'Overall[:\s]+([A-Z]{2,4})[:\s]', text)
+        if match:
+            return match.group(1)
+
+        # FINAL / RLL / 패턴
+        match = re.search(r'FINAL[^\w]*/?[^\w]*([A-Z]{2,4})[^\w]*/[^\w]*', text)
+        if match:
+            return match.group(1)
+
+        return None
+
+    def _extract_dose(self, text):
+        """선량 추출 (예: 39.6Gy)"""
+        # 39.6Gy 또는 33Gy 형식
+        match = re.search(r'([\d.]+)\s*Gy', text, re.IGNORECASE)
+        return match.group(1) + 'Gy' if match else None
+
+    def _extract_fraction(self, text):
+        """Fraction 수 추출"""
+        # 18fx 또는 18Fx 형식
+        match = re.search(r'(\d+)\s*[fF]x', text)
+        return match.group(1) + 'Fx' if match else None
+
+    def _extract_rt_method(self, text):
+        """RT Method 추출 (SBRT만 표시)"""
+        # SBRT인 경우에만 반환
+        if re.search(r'\bSBRT\b', text, re.IGNORECASE):
+            return 'SBRT'
+        return None
+
+    def _check_rf(self, text):
+        """RF 여부 확인"""
+        # FINAL-RF 패턴 찾기
+        if re.search(r'FINAL[- ]RF', text, re.IGNORECASE):
+            return True
+        return False
+
+    def _extract_image_guide(self, text):
+        """Image Guide 코드 추출 (G1->G2 등)"""
+        # G1->G2, G1 -> G2 등의 패턴
+        match = re.search(r'(G\d+)\s*-+>\s*(G\d+)', text, re.IGNORECASE)
+        if match:
+            return f"{match.group(1)}->{match.group(2)}"
+
+        # 단일 G 코드
+        match = re.search(r'\b(G\d+)\b', text, re.IGNORECASE)
+        return match.group(1) if match else None
+
+    def _extract_gating(self, text):
+        """Gating 방법 추출"""
+        # No gating with monitoring
+        if re.search(r'No\s+gating\s+with\s+monitoring', text, re.IGNORECASE):
+            return 'NGM'
+
+        # No Gating
+        if re.search(r'No\s+[Gg]ating', text, re.IGNORECASE):
+            return 'NG'
+
+        # 다른 gating 방법이 있다면 추가
+        return None
+
+    def validate_info(self, info):
+        """추출된 정보 검증"""
+        required_fields = ['patient_id', 'patient_name', 'treatment_site']
+
+        for field in required_fields:
+            if not info.get(field):
+                return False, f"필수 정보 누락: {field}"
+
+        return True, "OK"

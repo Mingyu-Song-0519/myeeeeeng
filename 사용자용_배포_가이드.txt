@@ -1,0 +1,59 @@
+==================================================
+EMR Helper - 배포 가이드 (권장)
+==================================================
+
+EXE 빌드가 복잡하므로 Python 포터블 + 소스 조합을 권장합니다.
+
+==================================================
+배포 방법 1: Python 포터블 버전 (권장)
+==================================================
+
+1. Python Portable 다운로드
+   https://www.python.org/downloads/
+   또는
+   https://portablepython.com/
+
+2. 폴더 구조:
+   EMR_Helper_Portable/
+   ├── Python/              (포터블 Python)
+   ├── asanhelper/          (프로그램 소스)
+   └── 실행.bat
+
+3. 실행.bat 내용:
+   @echo off
+   chcp 65001 > nul
+   cd /d "%~dp0"
+   Python\python.exe asanhelper\main.py
+   pause
+
+==================================================
+배포 방법 2: Python 설치 + 소스 코드 (간단)
+==================================================
+
+사용자에게 다음 안내:
+
+1. Python 3.8 이상 설치
+   https://www.python.org/downloads/
+
+2. asanhelper 폴더 복사
+
+3. 명령 프롬프트에서:
+   cd [asanhelper 경로]
+   pip install -r requirements.txt
+   python main.py
+
+==================================================
+배포 방법 3: 단순 실행 스크립트
+==================================================
+
+이미 Python이 설치된 병원 PC라면:
+
+asanhelper 폴더 + 실행.bat만 배포
+
+실행.bat:
+@echo off
+cd /d "%~dp0"
+python main.py
+pause
+
+==================================================

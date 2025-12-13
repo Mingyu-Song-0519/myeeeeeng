@@ -1,0 +1,55 @@
+==================================================
+EMR Helper 빌드 및 실행 가이드
+==================================================
+
+배치 파일(.bat)이 바로 실행되지 않는 경우:
+
+방법 1: 명령 프롬프트에서 실행 (권장)
+-----------------------------------------
+1. Windows 검색에서 "cmd" 입력
+2. "명령 프롬프트" 우클릭 → "관리자 권한으로 실행"
+3. 다음 명령어 입력:
+
+   cd /d D:\asanhelper
+   check_environment.bat
+
+방법 2: 탐색기에서 실행
+-----------------------------------------
+1. check_environment.bat 파일 우클릭
+2. "관리자 권한으로 실행" 선택
+
+방법 3: Python으로 직접 실행 (배치 파일 없이)
+-----------------------------------------
+명령 프롬프트(관리자)에서:
+
+cd /d D:\asanhelper
+
+# 1. 패키지 설치
+pip install -r requirements.txt
+
+# 2. 프로그램 실행 (개발 모드)
+python main.py
+
+# 3. 빌드 (실행 파일 생성)
+pip install pyinstaller
+pyinstaller --clean --onedir --console --name EMR_Helper main.py
+copy config.json dist\EMR_Helper\
+xcopy images dist\EMR_Helper\images\ /E /I
+copy screen_capture.py dist\EMR_Helper\
+copy ocr_extractor.py dist\EMR_Helper\
+copy message_generator.py dist\EMR_Helper\
+
+==================================================
+
+문제가 계속되면 아래 내용을 확인하세요:
+
+1. Python 설치 확인:
+   python --version
+
+2. pip 확인:
+   pip --version
+
+3. 현재 위치 확인:
+   cd
+
+==================================================

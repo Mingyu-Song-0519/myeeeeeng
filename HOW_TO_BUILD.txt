@@ -1,0 +1,79 @@
+============================================================
+EMR Helper - How to Build EXE
+============================================================
+
+SIMPLE 2-STEP PROCESS!
+
+============================================================
+Step 1: Build EXE
+============================================================
+
+Open Command Prompt and run:
+
+  cd /d D:\asanhelper
+  python build.py
+
+Wait 10-20 minutes...
+Result: dist\EMR_Helper folder with EXE
+
+============================================================
+Step 2: Create Distribution Package (Optional)
+============================================================
+
+Run:
+
+  python package.py
+
+Result: Package\ folder ready to distribute
+
+============================================================
+What Users Get
+============================================================
+
+Users receive ZIP file containing:
+  - Install.bat       <- They run this
+  - README.txt
+  - EMR_Helper\       (program folder)
+
+User experience:
+  1. Extract ZIP
+  2. Run Install.bat
+  3. Desktop shortcut created!
+  4. Click shortcut to run
+  5. Done!
+
+No Python required for users!
+
+============================================================
+Quick Commands
+============================================================
+
+Build only:
+  python build.py
+
+Build + Package:
+  python build.py
+  python package.py
+
+Test the build:
+  cd dist\EMR_Helper
+  EMR_Helper.exe
+
+============================================================
+Troubleshooting
+============================================================
+
+Q: "python: command not found"
+A: Install Python 3.8+ from python.org
+   Add to PATH during installation
+
+Q: Build fails
+A: Install dependencies first:
+   pip install -r requirements.txt
+
+Q: Takes too long
+A: Normal! EasyOCR and PyTorch are large
+   First build: 20-30 minutes
+   Later builds: 10-15 minutes
+
+============================================================
