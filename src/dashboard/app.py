@@ -550,6 +550,9 @@ def display_multi_stock_comparison():
                         height=500,
                         xaxis_tickformat="%Y년 %m월"
                     )
+                    fig.update_xaxes(fixedrange=True)
+                    fig.update_yaxes(fixedrange=True)
+                    
                     st.plotly_chart(fig, width='stretch', config={'scrollZoom': False})
 
                     # 상관관계 매트릭스
@@ -567,7 +570,9 @@ def display_multi_stock_comparison():
                         aspect='auto',
                         title="종목 간 상관관계"
                     )
-                    fig_corr.update_layout(template='plotly_dark', height=400, dragmode=False)
+                    fig_corr.update_layout(template='plotly_dark', height=400) # dragmode 제거
+                    fig_corr.update_xaxes(fixedrange=True)
+                    fig_corr.update_yaxes(fixedrange=True)
                     st.plotly_chart(fig_corr, width='stretch', config={'scrollZoom': False})
 
                     # 통계 요약
@@ -721,6 +726,8 @@ def display_news_sentiment():
             template='plotly_dark',
             height=300
         )
+        fig_sent.update_xaxes(fixedrange=True)
+        fig_sent.update_yaxes(fixedrange=True)
         st.plotly_chart(fig_sent, width='stretch', config={'scrollZoom': False})
 
         # 평균 감성
