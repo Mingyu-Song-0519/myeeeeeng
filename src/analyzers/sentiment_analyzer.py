@@ -13,9 +13,24 @@ except ImportError:
 class SentimentAnalyzer:
     """텍스트 감성 분석기"""
     
-    def __init__(self):
-        """초기화"""
+    def __init__(self, use_deep_learning: bool = False):
+        """
+        초기화
+        Args:
+            use_deep_learning: 딥러닝 모델 사용 여부 (호환성 유지용)
+        """
+        self.use_deep_learning = use_deep_learning
         pass
+        
+    def analyze_text(self, text: str) -> tuple:
+        """기본 감성 분석 (키워드/TextBlob)"""
+        score = self.analyze_sentiment(text)
+        return score, {}
+
+    def analyze_text_deep(self, text: str) -> tuple:
+        """딥러닝 감성 분석 (현재는 기본 분석으로 대체)"""
+        # 실제 딥러닝 모델이 없으므로 기본 분석으로 fallback
+        return self.analyze_text(text)
         
     def analyze_sentiment(self, text: str) -> float:
         """
