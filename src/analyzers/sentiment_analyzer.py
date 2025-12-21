@@ -5,10 +5,11 @@ from typing import List, Dict, Optional
 import re
 
 try:
-    from textblob import TextBlob
-    TEXTBLOB_AVAILABLE = True
+    from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+    import torch
+    TRANSFORMERS_AVAILABLE = True
 except ImportError:
-    TEXTBLOB_AVAILABLE = False
+    TRANSFORMERS_AVAILABLE = False
 
 class SentimentAnalyzer:
     """텍스트 감성 분석기"""
@@ -17,20 +18,77 @@ class SentimentAnalyzer:
         """
         초기화
         Args:
-            use_deep_learning: 딥러닝 모델 사용 여부 (호환성 유지용)
+            use_deep_learning: 딥러닝 모델 사용 여부
         """
         self.use_deep_learning = use_deep_learning
-        pass
+        self.dl_model = None
+        self.dl_tokenizer = None
+        self.dl_pipeline = None
         
+        if use_deep_learning:
+            self._load_dl_model()
+        
+    def _load_dl_model(self):
+        """딥러닝 모델 로드 (KR-FinBert-SC)"""
+        if not TRANSFORMERS_AVAILABLE:
+            print("[WARNING] transformers 라이브러리가 설치되지 않았습니다. 기본 분석을 사용합니다.")
+            self.use_deep_learning = False
+            return
+
+        try:
+            print("[INFO] 딥러닝 감성 분석 모델 로드 중... (snunlp/KR-FinBert-SC)")
+            # GPU 사용 가능 여부 확인
+            device = 0 if torch.cuda.is_available() else -1
+            
+            # 파이프라인 생성
+            self.dl_pipeline = pipeline(
+                "sentiment-analysis",
+                model="snunlp/KR-FinBert-SC",
+                tokenizer="snunlp/KR-FinBert-SC",
+                device=device
+            )
+            print(f"[INFO] 모델 로드 완료 (Device: {'GPU' if device==0 else 'CPU'})")
+        except Exception as e:
+            print(f"[ERROR] 모델 로드 실패: {e}")
+            self.use_deep_learning = False
+
     def analyze_text(self, text: str) -> tuple:
         """기본 감성 분석 (키워드/TextBlob)"""
         score = self.analyze_sentiment(text)
         return score, {}
 
     def analyze_text_deep(self, text: str) -> tuple:
-        """딥러닝 감성 분석 (현재는 기본 분석으로 대체)"""
-        # 실제 딥러닝 모델이 없으므로 기본 분석으로 fallback
-        return self.analyze_text(text)
+        """딥러닝 감성 분석"""
+        if not self.use_deep_learning or not self.dl_pipeline:
+            return self.analyze_text(text)
+            
+        try:
+            # 텍스트 길이 제한 (FinBERT는 512 토큰 제한)
+            # 대략적인 문자 수로 자름 (토크나이저 속도 최적화)
+            if len(text) > 1000:
+                text = text[:1000]
+                
+            result = self.dl_pipeline(text)[0]
+            # result 예시: {'label': 'positive', 'score': 0.99}
+            # KR-FinBert-SC labels: positive, negative, neutral
+            
+            label = result['label']
+            confidence = result['score']
+            
+            # 점수 변환 (-1.0 ~ 1.0)
+            score = 0.0
+            if label == 'positive':
+                score = confidence
+            elif label == 'negative':
+                score = -confidence
+            else: # neutral
+                score = 0.0
+                
+            return score, {'label': label, 'confidence': confidence}
+            
+        except Exception as e:
+            print(f"[ERROR] 딥러닝 분석 중 오류: {e}")
+            return self.analyze_text(text)
         
     def analyze_sentiment(self, text: str) -> float:
         """
