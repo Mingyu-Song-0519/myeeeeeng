@@ -356,7 +356,20 @@ class LSTMPredictor:
                             if isinstance(shape, tuple) and len(shape) >= 2:
                                 n_features_model = shape[-1]
                                 break
-                                
+            
+            # 3. 최후의 수단: 가중치(Weights) 확인
+            # LSTM Kernel weights shape: (input_dim, units * 4)
+            if n_features_model is None:
+                try:
+                    weights = self.model.get_weights()
+                    if weights and len(weights) > 0:
+                        kernel = weights[0] # 첫 번째 레이어의 커널이라 가정
+                        if hasattr(kernel, 'shape') and len(kernel.shape) == 2:
+                            n_features_model = kernel.shape[0]
+                            print(f"[INFO] 가중치 기반 Feature 감지: {n_features_model}")
+                except Exception as w_e:
+                    print(f"[WARNING] 가중치 확인 실패: {w_e}")
+
             if n_features_model is not None:
                 n_features_cols = len(self.preprocessor.feature_columns)
                 
