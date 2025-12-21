@@ -71,10 +71,11 @@ def setup_page():
             min-height: 100px; /* 높이 확보 */
         }
         
-        /* 모바일 당겨서 새로고침 방지 (스크롤 개선) */
+        /* 모바일 당겨서 새로고침 방지 (스크롤 개선) - 제거됨 (부작용 방지)
         html, body {
             overscroll-behavior-y: none !important;
         }
+        */
         
         .positive {
             color: #00d775;
@@ -234,14 +235,18 @@ def create_candlestick_chart(df: pd.DataFrame, ticker_name: str) -> go.Figure:
         showlegend=True,
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
         xaxis_rangeslider_visible=False,
-        dragmode=False  # 모바일 터치 스크롤 지원
+        # dragmode=False # 제거: fixedrange로 대체
     )
     
-    # X축 날짜 형식 한글화
-    fig.update_xaxes(tickformat="%Y년 %m월", row=1, col=1)
-    fig.update_xaxes(tickformat="%Y년 %m월", row=2, col=1)
-    fig.update_xaxes(tickformat="%Y년 %m월", row=3, col=1)
-    fig.update_xaxes(tickformat="%Y년 %m월", row=4, col=1)
+    # X축 날짜 형식 한글화 및 모바일 스크롤 지원 (fixedrange=True)
+    # fixedrange=True를 설정하면 차트 줌/팬이 비활성화되어 자연스럽게 페이지 스크롤이 가능해짐
+    fig.update_xaxes(tickformat="%Y년 %m월", row=1, col=1, fixedrange=True)
+    fig.update_xaxes(tickformat="%Y년 %m월", row=2, col=1, fixedrange=True)
+    fig.update_xaxes(tickformat="%Y년 %m월", row=3, col=1, fixedrange=True)
+    fig.update_xaxes(tickformat="%Y년 %m월", row=4, col=1, fixedrange=True)
+    
+    # Y축도 고정
+    fig.update_yaxes(fixedrange=True)
     
     return fig
 
