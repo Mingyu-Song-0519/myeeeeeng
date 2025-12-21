@@ -273,7 +273,7 @@ class LSTMPredictor:
         except Exception as e:
             # 차원 불일치 에러 감지 (ValueError 또는 "Dimensions must be equal")
             msg = str(e).lower()
-            if "dimensions" in msg or "shape" in msg or "mismatch" in msg:
+            if "dimensions" in msg or "shape" in msg or "mismatch" in msg or "minmaxscaler" in msg or ("features" in msg and "expecting" in msg):
                 print(f"[WARNING] 예측 중 차원 불일치 발생. 자동 보정 시도: {e}")
                 
                 # Feature 개수 줄여서 재시도 (맨 뒤에서부터 하나씩 제거)
@@ -432,6 +432,20 @@ class LSTMPredictor:
                     if n_features_model < n_features_cols:
                         self.preprocessor.feature_columns = self.preprocessor.feature_columns[:n_features_model]
                         print(f"[INFO] Feature 자동 축소 적용: {self.preprocessor.feature_columns}")
+                        
+                        # [중요] Scaler도 함께 축소해야 함
+                        try:
+                            scaler = self.preprocessor.scaler
+                            if hasattr(scaler, 'n_features_in_') and scaler.n_features_in_ > n_features_model:
+                                print(f"[INFO] Scaler 차원 축소: {scaler.n_features_in_} -> {n_features_model}")
+                                scaler.n_features_in_ = n_features_model
+                                if hasattr(scaler, 'min_'): scaler.min_ = scaler.min_[:n_features_model]
+                                if hasattr(scaler, 'scale_'): scaler.scale_ = scaler.scale_[:n_features_model]
+                                if hasattr(scaler, 'data_min_'): scaler.data_min_ = scaler.data_min_[:n_features_model]
+                                if hasattr(scaler, 'data_max_'): scaler.data_max_ = scaler.data_max_[:n_features_model]
+                                if hasattr(scaler, 'data_range_'): scaler.data_range_ = scaler.data_range_[:n_features_model]
+                        except Exception as scale_e:
+                            print(f"[WARNING] Scaler 조정 실패: {scale_e}")
                     
                     # 2. 모델이 더 많은 경우 -> 기본값에서 부족한 만큼 채우기
                     else:
