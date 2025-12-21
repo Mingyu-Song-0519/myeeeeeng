@@ -333,8 +333,24 @@ class LSTMPredictor:
             with open(feature_path, 'rb') as f:
                 self.preprocessor.feature_columns = pickle.load(f)
         else:
-            # 기본 feature columns 사용
-            self.preprocessor.feature_columns = ['close', 'volume', 'rsi', 'macd', 'ma5', 'ma20']
+            # 기본 feature columns 사용 (임시)
+            default_features = ['close', 'volume', 'rsi', 'macd', 'ma5', 'ma20']
+            
+            # 모델의 입력 형태 확인 후 Feature 수 맞춤
+            # model.input_shape는 (None, seq_len, n_features) 형태
+            try:
+                if hasattr(self.model, 'input_shape'):
+                    n_features = self.model.input_shape[-1]
+                    if n_features < len(default_features):
+                        self.preprocessor.feature_columns = default_features[:n_features]
+                        print(f"[INFO] 모델 입력 차원({n_features})에 맞춰 Feature 자동 조정: {self.preprocessor.feature_columns}")
+                    else:
+                        self.preprocessor.feature_columns = default_features
+                else:
+                    self.preprocessor.feature_columns = default_features
+            except Exception as e:
+                print(f"[WARNING] Feature 자동 조정 실패: {e}")
+                self.preprocessor.feature_columns = default_features
         
         print(f"[INFO] 모델 로드 완료: {model_path}")
     
