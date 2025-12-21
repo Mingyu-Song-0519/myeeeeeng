@@ -265,12 +265,64 @@ class LSTMPredictor:
         if self.model is None:
             raise ValueError("모델이 학습되지 않았습니다.")
         
-        feature_cols = feature_cols or self.preprocessor.feature_columns
+        # 1차 시도: 요청된 feature_cols 또는 저장된 설정 사용
+        current_cols = feature_cols or self.preprocessor.feature_columns
+        
+        try:
+            return self._predict_internal(df, current_cols)
+        except Exception as e:
+            # 차원 불일치 에러 감지 (ValueError 또는 "Dimensions must be equal")
+            msg = str(e).lower()
+            if "dimensions" in msg or "shape" in msg or "mismatch" in msg:
+                print(f"[WARNING] 예측 중 차원 불일치 발생. 자동 보정 시도: {e}")
+                
+                # Feature 개수 줄여서 재시도 (맨 뒤에서부터 하나씩 제거)
+                # 모델이 4개를 원하는데 5개가 들어온 경우 등을 대비
+                try:
+                    # 현재 5개라면 4개로, 6개라면 5개로... (모델 input shape를 알 수 있으면 좋지만 모르면 순차 시도)
+                    if hasattr(self.model, 'input_shape'):
+                        target_dim = self.model.input_shape[-1]
+                        if len(current_cols) > target_dim:
+                            print(f"[INFO] Feature {len(current_cols)} -> {target_dim}개로 조정하여 재시도")
+                            new_cols = current_cols[:target_dim]
+                            return self._predict_internal(df, new_cols)
+                    
+                    # input_shape를 모르는 경우: 하나 줄여서 시도 (임시)
+                    if len(current_cols) > 4:
+                        print(f"[INFO] Feature 하나 줄여서 재시도 ({len(current_cols)-1})")
+                        return self._predict_internal(df, current_cols[:-1])
+                        
+                except Exception as retry_e:
+                    print(f"[ERROR] 재시도 실패: {retry_e}")
+                    raise e  # 원래 에러 발생
+            
+            raise e
+
+    def _predict_internal(self, df: pd.DataFrame, feature_cols: list) -> np.ndarray:
+        """실제 예측 로직 (내부 호출용)"""
         available_cols = [col for col in feature_cols if col in df.columns]
         
+        if not available_cols:
+             raise ValueError("사용 가능한 Feature가 없습니다.")
+
         data = df[available_cols].dropna().tail(self.sequence_length).values
+        
+        # 데이터 길이가 부족한 경우 처리
+        if len(data) < self.sequence_length:
+             raise ValueError(f"데이터 부족: {len(data)} (필요: {self.sequence_length})")
+
         scaled_data = self.preprocessor.scaler.transform(data)
         
+        # 차원 확인 및 조정 (Scaler가 Feature 수와 안 맞을 경우 재조정 시도)
+        # Scaler는 학습 시점의 차원을 기억하고 있음.
+        # 만약 feature_cols를 줄였는데 scaler가 여전히 큰 차원을 기대하면 에러가 남.
+        # 이 경우 Scaler 무시하고 MinMax(-1,1)로 임시 정규화 (Emergency Mode)
+        if scaled_data.shape[1] != len(feature_cols):
+             # Scaler 재설정 (임시)
+             from sklearn.preprocessing import MinMaxScaler
+             temp_scaler = MinMaxScaler(feature_range=(0, 1))
+             scaled_data = temp_scaler.fit_transform(data)
+
         X = scaled_data.reshape(1, self.sequence_length, -1)
         prediction = self.model.predict(X, verbose=0)
         
