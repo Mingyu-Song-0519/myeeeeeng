@@ -11,6 +11,12 @@ try:
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
 
+try:
+    from textblob import TextBlob
+    TEXTBLOB_AVAILABLE = True
+except ImportError:
+    TEXTBLOB_AVAILABLE = False
+
 class SentimentAnalyzer:
     """텍스트 감성 분석기"""
     
