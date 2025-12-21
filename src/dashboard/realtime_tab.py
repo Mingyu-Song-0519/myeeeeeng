@@ -17,23 +17,43 @@ def display_realtime_data():
     st.header("🔴 실시간 시세 (한국투자증권)")
 
     # API 키 확인
+    # API 키 확인 (Secrets -> env 순서)
     import os
-    env_path = PROJECT_ROOT / ".env"
     from dotenv import load_dotenv
-    if env_path.exists():
-        load_dotenv(env_path)
     
-    APP_KEY = os.getenv("KIS_APP_KEY")
-    APP_SECRET = os.getenv("KIS_APP_SECRET")
-    ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO")
+    # 1. Streamlit Secrets 확인
+    if 'kis' in st.secrets:
+        APP_KEY = st.secrets['kis']['APP_KEY']
+        APP_SECRET = st.secrets['kis']['APP_SECRET']
+        ACCOUNT_NO = st.secrets['kis']['ACCOUNT_NO']
+    else:
+        # 2. .env 파일 확인
+        env_path = PROJECT_ROOT / ".env"
+        if env_path.exists():
+            load_dotenv(env_path)
+            
+        APP_KEY = os.getenv("KIS_APP_KEY")
+        APP_SECRET = os.getenv("KIS_APP_SECRET")
+        ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO")
     
     if not all([APP_KEY, APP_SECRET, ACCOUNT_NO]):
-        st.error("⚠️ `.env` 파일에 한국투자증권 API 설정이 필요합니다.")
-        st.code("""
-        KIS_APP_KEY=your_key
-        KIS_APP_SECRET=your_secret
-        KIS_ACCOUNT_NO=your_account
-        """, language="properties")
+        st.warning("⚠️ 실시간 탭을 사용하려면 API 설정이 필요합니다.")
+        st.info("Streamlit Cloud 배포 후 [Manage app] > [Settings] > [Secrets]에서 설정해주세요.")
+        
+        # 데모용 더미 데이터 또는 기능 비활성화 처리
+        # 앱이 멈추지 않도록 None 반환 대신 빈 값으로 처리하거나 리턴
+        
+        # Secrets 예시 표시
+        with st.expander("설정 방법 보기"):
+            st.code("""
+            [kis]
+            APP_KEY = "your_key"
+            APP_SECRET = "your_secret"
+            ACCOUNT_NO = "your_account"
+            """, language="toml")
+            
+        # 키가 없으면 함수 종료 (UI만 표시하고 로직 실행 안 함)
+        return
     # 세션 상태 초기화
     if 'realtime_running' not in st.session_state:
         st.session_state.realtime_running = False
