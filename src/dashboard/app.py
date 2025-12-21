@@ -122,8 +122,8 @@ def create_candlestick_chart(df: pd.DataFrame, ticker_name: str) -> go.Figure:
     fig = make_subplots(
         rows=4, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.08,  # 간격 확대
-        row_heights=[0.45, 0.15, 0.2, 0.2],
+        vertical_spacing=0.15,  # 간격 대폭 확대 (0.08 -> 0.15)
+        row_heights=[0.40, 0.15, 0.20, 0.25],
         subplot_titles=(f'{ticker_name} 주가', 'RSI (14일)', 'MACD', '거래량')
     )
     
