@@ -337,31 +337,51 @@ class LSTMPredictor:
             self.preprocessor.feature_columns = ['close', 'volume', 'rsi', 'macd', 'ma5', 'ma20']
             
         # [중요] 모델의 실제 입력 형태와 Feature 개수 일치 보장
-        # 파일에서 로드했더라도 모델과 다를 수 있으므로 검증 필수
         try:
+            n_features_model = None
+            
+            # 1. model.input_shape 확인
             if hasattr(self.model, 'input_shape'):
-                # model.input_shape는 (None, seq_len, n_features) 형태
-                n_features_model = self.model.input_shape[-1]
+                shape = self.model.input_shape
+                # (None, 60, 4) 형태
+                if isinstance(shape, tuple) and len(shape) == 3:
+                    n_features_model = shape[-1]
+            
+            # 2. 실패 시 첫 번째 레이어 확인
+            if n_features_model is None and hasattr(self.model, 'layers'):
+                for layer in self.model.layers:
+                    if 'lstm' in layer.name.lower() or 'input' in layer.name.lower():
+                        if hasattr(layer, 'input_shape'):
+                            shape = layer.input_shape
+                            if isinstance(shape, tuple) and len(shape) >= 2:
+                                n_features_model = shape[-1]
+                                break
+                                
+            if n_features_model is not None:
                 n_features_cols = len(self.preprocessor.feature_columns)
                 
                 if n_features_model != n_features_cols:
-                    print(f"[WARNING] Feature 불일치 감지! 모델: {n_features_model}, 설정값: {n_features_cols}")
+                    print(f"[WARNING] Feature 불일치! 모델 요구: {n_features_model}, 현재 설정: {n_features_cols}")
                     
-                    # 1. 모델이 더 적은 경우 -> 잘라내기
+                    # 1. 모델이 더 적은 경우 -> 앞에서부터 잘라내기
                     if n_features_model < n_features_cols:
                         self.preprocessor.feature_columns = self.preprocessor.feature_columns[:n_features_model]
-                        print(f"[INFO] Feature 자동 축소: {self.preprocessor.feature_columns}")
+                        print(f"[INFO] Feature 자동 축소 적용: {self.preprocessor.feature_columns}")
                     
-                    # 2. 모델이 더 많은 경우 -> 기본값에서 추가 (또는 패딩 처리 필요하지만 여기선 경고만)
+                    # 2. 모델이 더 많은 경우 -> 기본값에서 부족한 만큼 채우기
                     else:
-                        st.warning(f"모델이 더 많은 Feature({n_features_model})를 요구합니다. 재학습이 권장됩니다.")
-                        # 임시로 기본 컬럼에서 모자란 만큼 채워넣기 시도 (위험하지만 에러 방지용)
-                        default_pool = ['close', 'volume', 'rsi', 'macd', 'ma5', 'ma20', 'ma60', 'ma120']
-                        current = self.preprocessor.feature_columns
+                        print(f"[WARNING] 모델이 더 많은 Feature를 요구합니다.")
+                        default_pool = ['close', 'volume', 'rsi', 'macd', 'ma5', 'ma20', 'ma60', 'ma120', 'bb_upper', 'bb_lower']
+                        current = list(self.preprocessor.feature_columns)
                         for col in default_pool:
-                            if col not in current and len(current) < n_features_model:
+                            if len(current) >= n_features_model:
+                                break
+                            if col not in current:
                                 current.append(col)
                         self.preprocessor.feature_columns = current
+                        print(f"[INFO] Feature 자동 확장 적용: {self.preprocessor.feature_columns}")
+            else:
+                print("[WARNING] 모델의 Input Shape를 감지할 수 없습니다.")
                         
         except Exception as e:
             print(f"[WARNING] Feature 자동 조정 중 오류: {e}")
