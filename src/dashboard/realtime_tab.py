@@ -10,38 +10,48 @@ import sys
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.collectors.kis_realtime_collector import KISRealtimeCollector
+try:
+    from src.collectors.kis_realtime_collector import KISRealtimeCollector
+except ImportError:
+    # 경로 문제 시 상대 경로 시도
+    sys.path.append(str(PROJECT_ROOT / "src" / "collectors"))
+    from kis_realtime_collector import KISRealtimeCollector
 
 def display_realtime_data():
     """실시간 시세 탭 (REST API 기반)"""
     st.header("🔴 실시간 시세 (한국투자증권)")
 
-    # API 키 확인
     # API 키 확인 (Secrets -> env 순서)
     import os
     from dotenv import load_dotenv
     
-    # 1. Streamlit Secrets 확인
-    if 'kis' in st.secrets:
-        APP_KEY = st.secrets['kis']['APP_KEY']
-        APP_SECRET = st.secrets['kis']['APP_SECRET']
-        ACCOUNT_NO = st.secrets['kis']['ACCOUNT_NO']
-    else:
-        # 2. .env 파일 확인
+    APP_KEY = None
+    APP_SECRET = None
+    ACCOUNT_NO = None
+
+    # 1. Streamlit Secrets 확인 (예외 처리 추가)
+    try:
+        if 'kis' in st.secrets:
+            APP_KEY = st.secrets['kis']['APP_KEY']
+            APP_SECRET = st.secrets['kis']['APP_SECRET']
+            ACCOUNT_NO = st.secrets['kis']['ACCOUNT_NO']
+    except Exception:
+        # bit.ly/streamlit-secrets-error 등 비밀키 설정이 없을 때 발생 (로컬/클라우드 초기 상태)
+        pass
+
+    # 2. .env 파일 확인 (Secrets에서 못 찾았을 경우)
+    if not all([APP_KEY, APP_SECRET, ACCOUNT_NO]):
         env_path = PROJECT_ROOT / ".env"
         if env_path.exists():
             load_dotenv(env_path)
             
-        APP_KEY = os.getenv("KIS_APP_KEY")
-        APP_SECRET = os.getenv("KIS_APP_SECRET")
-        ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO")
+            APP_KEY = os.getenv("KIS_APP_KEY")
+            APP_SECRET = os.getenv("KIS_APP_SECRET")
+            ACCOUNT_NO = os.getenv("KIS_ACCOUNT_NO")
     
     if not all([APP_KEY, APP_SECRET, ACCOUNT_NO]):
         st.warning("⚠️ 실시간 탭을 사용하려면 API 설정이 필요합니다.")
         st.info("Streamlit Cloud 배포 후 [Manage app] > [Settings] > [Secrets]에서 설정해주세요.")
-        
-        # 데모용 더미 데이터 또는 기능 비활성화 처리
-        # 앱이 멈추지 않도록 None 반환 대신 빈 값으로 처리하거나 리턴
         
         # Secrets 예시 표시
         with st.expander("설정 방법 보기"):
@@ -52,8 +62,9 @@ def display_realtime_data():
             ACCOUNT_NO = "your_account"
             """, language="toml")
             
-        # 키가 없으면 함수 종료 (UI만 표시하고 로직 실행 안 함)
+        # 키가 없으면 함수 종료
         return
+
     # 세션 상태 초기화
     if 'realtime_running' not in st.session_state:
         st.session_state.realtime_running = False
