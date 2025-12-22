@@ -23,7 +23,7 @@ warnings.filterwarnings('ignore', category=DeprecationWarning, module='tensorflo
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import DEFAULT_TICKERS, US_TICKERS, DASHBOARD_CONFIG, ENSEMBLE_CONFIG
+from config import DEFAULT_TICKERS, US_TICKERS, DASHBOARD_CONFIG, ENSEMBLE_CONFIG, MARKET_CONFIG, EXCHANGE_RATE_CONFIG
 from src.collectors.stock_collector import StockDataCollector
 from src.collectors.multi_stock_collector import MultiStockCollector
 from src.collectors.news_collector import NewsCollector
@@ -123,6 +123,49 @@ def get_cached_multi_stock_data(tickers: list, period: str) -> dict:
         st.error(f"다중 데이터 수집 오류: {e}")
         return {}
 
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_cached_stock_listing(market: str) -> tuple:
+    """종목 리스트 수집 (캐싱 적용, 24시간)"""
+    try:
+        import FinanceDataReader as fdr
+        
+        if market == 'US':
+            df_nyse = fdr.StockListing('NYSE')
+            df_nasdaq = fdr.StockListing('NASDAQ')
+            df = pd.concat([df_nyse, df_nasdaq], ignore_index=True)
+            df = df.dropna(subset=['Symbol', 'Name'])
+            df = df.drop_duplicates(subset=['Symbol'])
+            stock_dict = dict(zip(
+                df['Name'] + ' (' + df['Symbol'] + ')',
+                df['Symbol']
+            ))
+        else:  # KR
+            df = fdr.StockListing('KRX')
+            stock_dict = dict(zip(
+                df['Name'] + ' (' + df['Code'] + ')',
+                df['Code']
+            ))
+        
+        return stock_dict, list(stock_dict.keys())
+    except Exception as e:
+        print(f"[ERROR] 종목 리스트 로딩 실패: {e}")
+        return {}, []
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_cached_exchange_rate() -> float:
+    """환율 데이터 수집 (캐싱 적용, 1시간)"""
+    try:
+        import yfinance as yf
+        usdkrw = yf.Ticker("USDKRW=X")
+        rate = usdkrw.info.get('regularMarketPrice', None)
+        if rate is None:
+            rate = usdkrw.history(period="1d")['Close'].iloc[-1]
+        return float(rate)
+    except Exception as e:
+        print(f"[ERROR] 환율 데이터 수집 실패: {e}")
+        return 1350.0  # 기본값
 
 def create_candlestick_chart(df: pd.DataFrame, ticker_name: str) -> go.Figure:
     """캔들스틱 차트 생성"""
@@ -276,6 +319,7 @@ def display_metrics(df: pd.DataFrame):
     
     # 통화 기호
     currency = st.session_state.get('currency_symbol', '₩')
+    current_market = st.session_state.get('current_market', 'KR')
     
     col1, col2, col3, col4, col5 = st.columns(5)
     
@@ -318,6 +362,31 @@ def display_metrics(df: pd.DataFrame):
             label="52주 범위 위치",
             value=f"{current_pos:.1f}%"
         )
+    
+    # 미국 주식일 경우 환율 정보 추가 표시
+    if current_market == 'US':
+        try:
+            exchange_rate = get_cached_exchange_rate()
+            krw_price = latest['close'] * exchange_rate
+            krw_change = price_change * exchange_rate
+            
+            st.markdown("---")
+            ecol1, ecol2, ecol3 = st.columns(3)
+            with ecol1:
+                st.metric(
+                    label="💱 USD/KRW 환율",
+                    value=f"₩{exchange_rate:,.2f}"
+                )
+            with ecol2:
+                st.metric(
+                    label="🇰🇷 원화 환산가",
+                    value=f"₩{krw_price:,.0f}",
+                    delta=f"{krw_change:+,.0f}"
+                )
+            with ecol3:
+                st.caption("※ 환율 데이터: Yahoo Finance (1시간 캐싱)")
+        except Exception as e:
+            print(f"[WARNING] 환율 표시 실패: {e}")
 
 
 def display_signals(df: pd.DataFrame):
@@ -590,6 +659,7 @@ def display_multi_stock_comparison():
 
                     # 통계 요약
                     st.markdown("### 📊 통계 요약")
+                    currency = MARKET_CONFIG[current_market]['currency_symbol']
                     summary_data = []
                     for ticker, df in results.items():
                         name = ticker_to_name.get(ticker, ticker)
@@ -598,13 +668,21 @@ def display_multi_stock_comparison():
 
                         summary_data.append({
                             '종목': name,
-                            '현재가': f"{df['close'].iloc[-1]:,.0f}",
+                            '현재가': f"{currency}{df['close'].iloc[-1]:,.2f}" if current_market == 'US' else f"{currency}{df['close'].iloc[-1]:,.0f}",
                             '수익률': f"{total_return:+.2f}%",
                             '변동성(연)': f"{volatility:.2f}%",
                             '평균거래량': f"{df['volume'].mean():,.0f}"
                         })
 
                     st.dataframe(pd.DataFrame(summary_data), width='stretch')
+                    
+                    # 미국 시장일 경우 환율 정보 표시
+                    if current_market == 'US':
+                        try:
+                            exchange_rate = get_cached_exchange_rate()
+                            st.info(f"💱 현재 환율: 1 USD = ₩{exchange_rate:,.2f} (1시간 캐싱)")
+                        except Exception:
+                            pass
 
             except Exception as e:
                 st.error(f"오류 발생: {str(e)}")
@@ -613,27 +691,49 @@ def display_multi_stock_comparison():
 def display_news_sentiment():
     """뉴스 감성 분석 뷰"""
     st.subheader("📰 뉴스 & 감성 분석")
+    
+    # 현재 시장 확인
+    current_market = st.session_state.get('current_market', 'KR')
 
-    # 전체 종목 검색
-    stock_options = st.session_state.get('krx_stock_names', list(DEFAULT_TICKERS.keys()))
-    default_idx = stock_options.index("삼성전자 (005930)") if "삼성전자 (005930)" in stock_options else 0
+    # 시장에 따른 종목 목록 선택
+    if current_market == 'US':
+        stock_options = st.session_state.get('us_stock_names', ["Apple (AAPL)"])
+        default_stock = "Apple (AAPL)"
+        stock_list = st.session_state.get('us_stock_list', {"Apple (AAPL)": "AAPL"})
+    else:
+        stock_options = st.session_state.get('krx_stock_names', list(DEFAULT_TICKERS.keys()))
+        default_stock = "삼성전자 (005930)"
+        stock_list = st.session_state.get('krx_stock_list', {"삼성전자 (005930)": "005930"})
+    
+    default_idx = stock_options.index(default_stock) if default_stock in stock_options else 0
     selected = st.selectbox("종목 검색", stock_options, index=default_idx, key="news_stock")
-    ticker_code = st.session_state.get('krx_stock_list', {}).get(selected, "005930")
+    ticker_code = stock_list.get(selected, "005930" if current_market == 'KR' else "AAPL")
     ticker_name = selected.split(" (")[0] if "(" in selected else selected
 
     # 검색어 설정 (구글 뉴스용)
-    search_query = st.text_input(
-        "구글 뉴스 검색어 (수정 가능)", 
-        value=ticker_name,
-        help="Google News 수집 시 사용할 키워드입니다. 네이버 금융 뉴스는 종목 코드로 자동 수집됩니다."
-    )
+    if current_market == 'US':
+        search_query = st.text_input(
+            "영문 뉴스 검색어 (수정 가능)", 
+            value=f"{ticker_name} stock",
+            help="Yahoo Finance 및 Google News (EN) 뉴스 수집 시 사용할 키워드입니다."
+        )
+    else:
+        search_query = st.text_input(
+            "구글 뉴스 검색어 (수정 가능)", 
+            value=ticker_name,
+            help="Google News 수집 시 사용할 키워드입니다. 네이버 금융 뉴스는 종목 코드로 자동 수집됩니다."
+        )
     
-    # 딥러닝 분석 옵션
-    use_deep_learning = st.checkbox(
-        "🧠 딥러닝 감성 분석 (KR-FinBert-SC)",
-        value=False,
-        help="GPU 활용 딥러닝 모델로 더 정확한 감성 분석을 수행합니다. 첫 실행 시 모델 다운로드가 필요합니다."
-    )
+    # 딥러닝 분석 옵션 (한국어 전용)
+    if current_market == 'KR':
+        use_deep_learning = st.checkbox(
+            "🧠 딥러닝 감성 분석 (KR-FinBert-SC)",
+            value=False,
+            help="GPU 활용 딥러닝 모델로 더 정확한 감성 분석을 수행합니다. 첫 실행 시 모델 다운로드가 필요합니다."
+        )
+    else:
+        use_deep_learning = False
+        st.info("💡 미국 종목은 VADER 기반 영문 감성 분석을 사용합니다.")
 
     if st.button("📥 뉴스 수집 및 분석", type="primary"):
         with st.spinner(f"'{search_query}' 관련 뉴스 수집 중..."):
@@ -641,13 +741,18 @@ def display_news_sentiment():
                 news_collector = NewsCollector()
                 sentiment_analyzer = SentimentAnalyzer(use_deep_learning=use_deep_learning)
                 
-                # 1. 네이버 금융 뉴스 수집 (5페이지)
-                naver_articles = news_collector.fetch_naver_finance_news(ticker_code, max_pages=5)
+                if current_market == 'US':
+                    # 미국 종목: Yahoo Finance + Google News (EN)
+                    yahoo_articles = news_collector.fetch_yahoo_finance_news_rss(ticker_code, max_items=30)
+                    google_articles = news_collector.fetch_google_news_en_rss(search_query, max_items=30)
+                    all_articles_raw = yahoo_articles + google_articles
+                else:
+                    # 한국 종목: 네이버 금융 + 구글 뉴스 (KR)
+                    naver_articles = news_collector.fetch_naver_finance_news(ticker_code, max_pages=5)
+                    google_articles = news_collector.fetch_google_news_rss(search_query, max_items=50)
+                    all_articles_raw = naver_articles + google_articles
                 
-                # 2. 구글 뉴스 수집 (50개)
-                google_articles = news_collector.fetch_google_news_rss(search_query, max_items=50)
-                
-                # 3. 제목 유사도 기반 중복 필터링
+                # 제목 유사도 기반 중복 필터링
                 def filter_similar_titles(articles, threshold=0.4):
                     if not articles:
                         return []
@@ -669,19 +774,26 @@ def display_news_sentiment():
                             filtered.append(article)
                     return filtered
                 
-                all_articles_raw = naver_articles + google_articles
                 all_articles = filter_similar_titles(all_articles_raw, threshold=0.4)
                 
                 if all_articles:
                     # 감성 점수 계산
-                    analysis_method = "딥러닝 (KR-FinBert-SC)" if use_deep_learning else "키워드 기반"
+                    if current_market == 'US':
+                        analysis_method = "VADER (영문)"
+                    elif use_deep_learning:
+                        analysis_method = "딥러닝 (KR-FinBert-SC)"
+                    else:
+                        analysis_method = "키워드 기반"
                     
                     with st.spinner(f"감성 분석 중... ({analysis_method})"):
                         for article in all_articles:
                             text = article['title'] + ' ' + article.get('content', '')
                             
-                            # 딥러닝 또는 키워드 기반 분석
-                            if use_deep_learning:
+                            # 시장에 따른 분석 방법 선택
+                            if current_market == 'US':
+                                score, details = sentiment_analyzer.analyze_text_en(text)
+                                article['analysis_method'] = 'vader_en'
+                            elif use_deep_learning:
                                 score, details = sentiment_analyzer.analyze_text_deep(text)
                                 article['analysis_method'] = 'deep_learning'
                             else:
@@ -1371,11 +1483,16 @@ def display_multi_stock_comparison_mini(panel_id: str):
 
 def display_news_sentiment_mini(panel_id: str):
     """분할 모드용 간소화된 뉴스 감성 분석"""
-    stock_options = st.session_state.get('krx_stock_names', ["삼성전자 (005930)"])
+    current_market = st.session_state.get('current_market', 'KR')
+    stock_options = st.session_state.get('active_stock_names', ["삼성전자 (005930)"])
     selected = st.selectbox("종목 선택", stock_options, key=f"news_stock_{panel_id}")
     
-    # 종목 코드 추출
-    ticker = st.session_state.get('krx_stock_list', {}).get(selected, "005930")
+    # 종목 코드 추출 (시장별)
+    stock_list = st.session_state.get('active_stock_list', {})
+    if current_market == 'US':
+        ticker = stock_list.get(selected, "AAPL")
+    else:
+        ticker = stock_list.get(selected, "005930")
     keyword = selected.split(" (")[0] if "(" in selected else selected
     
     if st.button("📰 뉴스 수집", key=f"news_fetch_{panel_id}", type="primary"):
@@ -1383,7 +1500,13 @@ def display_news_sentiment_mini(panel_id: str):
             try:
                 from src.collectors.news_collector import NewsCollector
                 collector = NewsCollector()
-                news_list = collector.fetch_naver_finance_news(ticker, max_pages=2)
+                
+                if current_market == 'US':
+                    # 미국: Yahoo Finance + Google EN
+                    news_list = collector.fetch_yahoo_finance_news_rss(ticker, max_items=10)
+                else:
+                    # 한국: 네이버 금융
+                    news_list = collector.fetch_naver_finance_news(ticker, max_pages=2)
                 
                 # DataFrame으로 변환
                 import pandas as pd
@@ -1405,9 +1528,15 @@ def display_ai_prediction_mini(panel_id: str):
     """분할 모드용 AI 예측 (전체 화면과 동일)"""
     import os
     
-    stock_options = st.session_state.get('krx_stock_names', ["삼성전자 (005930)"])
+    current_market = st.session_state.get('current_market', 'KR')
+    stock_options = st.session_state.get('active_stock_names', ["삼성전자 (005930)"])
     selected = st.selectbox("종목 선택", stock_options, key=f"ai_stock_{panel_id}")
-    ticker_code = st.session_state.get('krx_stock_list', {}).get(selected, "005930") + ".KS"
+    
+    stock_list = st.session_state.get('active_stock_list', {})
+    if current_market == 'US':
+        ticker_code = stock_list.get(selected, "AAPL")
+    else:
+        ticker_code = stock_list.get(selected, "005930") + ".KS"
     ticker_name = selected.split(" (")[0] if "(" in selected else selected
     
     col1, col2 = st.columns(2)
@@ -1716,27 +1845,23 @@ def main():
         st.session_state.currency_symbol = "$"
         st.session_state.ticker_suffix = ""
         
-        # 미국 주식 목록 로드
+        # 미국 주식 목록 로드 (캐싱 적용)
         if 'us_stock_list' not in st.session_state:
-            # 인기 미국 종목
-            us_stocks = {
-                "Apple (AAPL)": "AAPL", "Microsoft (MSFT)": "MSFT", "Google (GOOGL)": "GOOGL",
-                "Amazon (AMZN)": "AMZN", "Tesla (TSLA)": "TSLA", "NVIDIA (NVDA)": "NVDA",
-                "Meta (META)": "META", "Netflix (NFLX)": "NFLX", "AMD (AMD)": "AMD",
-                "Intel (INTC)": "INTC", "PayPal (PYPL)": "PYPL", "Adobe (ADBE)": "ADBE",
-                "Salesforce (CRM)": "CRM", "Cisco (CSCO)": "CSCO", "Oracle (ORCL)": "ORCL",
-                "Qualcomm (QCOM)": "QCOM", "Broadcom (AVGO)": "AVGO", "Texas Instruments (TXN)": "TXN",
-                "IBM (IBM)": "IBM", "Disney (DIS)": "DIS", "Coca-Cola (KO)": "KO",
-                "Pepsi (PEP)": "PEP", "Nike (NKE)": "NKE", "McDonald's (MCD)": "MCD",
-                "Walmart (WMT)": "WMT", "Costco (COST)": "COST", "Starbucks (SBUX)": "SBUX",
-                "Boeing (BA)": "BA", "Goldman Sachs (GS)": "GS", "JPMorgan (JPM)": "JPM",
-                "Bank of America (BAC)": "BAC", "Visa (V)": "V", "Mastercard (MA)": "MA",
-                "Johnson & Johnson (JNJ)": "JNJ", "Pfizer (PFE)": "PFE", "UnitedHealth (UNH)": "UNH",
-                "ExxonMobil (XOM)": "XOM", "Chevron (CVX)": "CVX", "Berkshire Hathaway (BRK-B)": "BRK-B",
-                "S&P 500 ETF (SPY)": "SPY", "NASDAQ 100 ETF (QQQ)": "QQQ", "Dow Jones ETF (DIA)": "DIA"
-            }
-            st.session_state.us_stock_list = us_stocks
-            st.session_state.us_stock_names = list(us_stocks.keys())
+            with st.spinner("🇺🇸 미국 종목 목록 로딩 중..."):
+                stock_dict, stock_names = get_cached_stock_listing('US')
+                if stock_dict:
+                    st.session_state.us_stock_list = stock_dict
+                    st.session_state.us_stock_names = stock_names
+                else:
+                    # 폴백: 기본 인기 종목
+                    us_stocks = {
+                        "Apple (AAPL)": "AAPL", "Microsoft (MSFT)": "MSFT", "Google (GOOGL)": "GOOGL",
+                        "Amazon (AMZN)": "AMZN", "Tesla (TSLA)": "TSLA", "NVIDIA (NVDA)": "NVDA",
+                        "Meta (META)": "META", "Netflix (NFLX)": "NFLX", "AMD (AMD)": "AMD",
+                        "S&P 500 ETF (SPY)": "SPY", "NASDAQ 100 ETF (QQQ)": "QQQ"
+                    }
+                    st.session_state.us_stock_list = us_stocks
+                    st.session_state.us_stock_names = list(us_stocks.keys())
         
         st.session_state.active_stock_list = st.session_state.us_stock_list
         st.session_state.active_stock_names = st.session_state.us_stock_names
@@ -1746,19 +1871,16 @@ def main():
         st.session_state.currency_symbol = "₩"
         st.session_state.ticker_suffix = ".KS"
         
-        # KRX 종목 리스트 로드 (최초 1회)
+        # KRX 종목 리스트 로드 (캐싱 적용)
         if 'krx_stock_list' not in st.session_state:
-            try:
-                import FinanceDataReader as fdr
-                df = fdr.StockListing('KRX')
-                st.session_state.krx_stock_list = dict(zip(
-                    df['Name'] + ' (' + df['Code'] + ')',
-                    df['Code']
-                ))
-                st.session_state.krx_stock_names = list(st.session_state.krx_stock_list.keys())
-            except Exception as e:
-                st.session_state.krx_stock_list = {"삼성전자 (005930)": "005930"}
-                st.session_state.krx_stock_names = ["삼성전자 (005930)"]
+            with st.spinner("🇰🇷 한국 종목 목록 로딩 중..."):
+                stock_dict, stock_names = get_cached_stock_listing('KR')
+                if stock_dict:
+                    st.session_state.krx_stock_list = stock_dict
+                    st.session_state.krx_stock_names = stock_names
+                else:
+                    st.session_state.krx_stock_list = {"삼성전자 (005930)": "005930"}
+                    st.session_state.krx_stock_names = ["삼성전자 (005930)"]
         
         st.session_state.active_stock_list = st.session_state.krx_stock_list
         st.session_state.active_stock_names = st.session_state.krx_stock_names
@@ -2137,12 +2259,24 @@ def display_portfolio_optimization():
                 # 최적 비중 표시
                 st.markdown("### 💰 최적 비중 (최대 샤프 기준)")
                 if max_sharpe['success']:
+                    currency = MARKET_CONFIG[current_market]['currency_symbol']
+                    base_amount = 100_000_000 if current_market == 'KR' else 100_000  # 1억원 or 10만불
+                    amount_label = "금액 (1억원 기준)" if current_market == 'KR' else "금액 ($100K 기준)"
+                    
                     weights_df = pd.DataFrame({
                         '종목': list(max_sharpe['weights'].keys()),
                         '비중': [f"{w*100:.1f}%" for w in max_sharpe['weights'].values()],
-                        '금액 (1억 기준)': [f"₩{w*100_000_000:,.0f}" for w in max_sharpe['weights'].values()]
+                        amount_label: [f"{currency}{w*base_amount:,.0f}" for w in max_sharpe['weights'].values()]
                     })
                     st.dataframe(weights_df, width='stretch', hide_index=True)
+                    
+                    # 미국 시장일 경우 환율 정보 추가
+                    if current_market == 'US':
+                        try:
+                            exchange_rate = get_cached_exchange_rate()
+                            st.info(f"💱 현재 환율: 1 USD = ₩{exchange_rate:,.2f} | 원화 환산 시 약 ₩{100_000 * exchange_rate:,.0f} 기준")
+                        except Exception:
+                            pass
 
                     # 파이 차트
                     fig = px.pie(
@@ -2152,6 +2286,7 @@ def display_portfolio_optimization():
                     )
                     fig.update_layout(template='plotly_dark', height=400, dragmode=False)
                     st.plotly_chart(fig, width='stretch', config={'scrollZoom': False})
+
 
                 # 효율적 투자선
                 col_title1, col_help1 = st.columns([10, 1])

@@ -313,6 +313,129 @@ class NewsCollector:
 
         return news_list
 
+    def fetch_yahoo_finance_news_rss(
+        self,
+        ticker: str,
+        max_items: int = 30
+    ) -> List[Dict]:
+        """
+        Yahoo Finance RSS 피드에서 종목별 영문 뉴스를 수집합니다.
+
+        Args:
+            ticker: 종목 심볼 (예: 'AAPL', 'TSLA')
+            max_items: 수집할 최대 뉴스 수
+
+        Returns:
+            뉴스 리스트
+        """
+        news_list = []
+
+        try:
+            # Yahoo Finance RSS URL
+            rss_url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
+
+            print(f"[INFO] Yahoo Finance RSS 피드 수집 중... (종목: {ticker})")
+
+            # RSS 피드 파싱
+            feed = feedparser.parse(rss_url)
+
+            if not feed.entries:
+                print(f"[INFO] Yahoo Finance에서 '{ticker}' 관련 뉴스를 찾을 수 없습니다.")
+                return news_list
+
+            for entry in feed.entries[:max_items]:
+                try:
+                    title = entry.get('title', '')
+                    link = entry.get('link', '')
+                    published = entry.get('published', '')
+                    summary = entry.get('summary', '')
+
+                    # 날짜 파싱
+                    date_str = self._parse_rss_date(published)
+
+                    news_item = {
+                        'title': title,
+                        'url': link,
+                        'date': date_str,
+                        'content': summary[:1000] if summary else '',
+                        'source': 'yahoo_finance'
+                    }
+
+                    news_list.append(news_item)
+
+                except Exception as e:
+                    print(f"[ERROR] Yahoo RSS 아이템 처리 실패: {e}")
+                    continue
+
+            print(f"[INFO] Yahoo Finance에서 {len(news_list)}개 뉴스 수집 완료")
+
+        except Exception as e:
+            print(f"[ERROR] Yahoo Finance RSS 수집 실패: {e}")
+
+        return news_list
+
+    def fetch_google_news_en_rss(
+        self,
+        query: str,
+        max_items: int = 30
+    ) -> List[Dict]:
+        """
+        Google News 영문 RSS 피드에서 뉴스를 수집합니다.
+
+        Args:
+            query: 검색 키워드 (예: 'Apple stock' 또는 'AAPL')
+            max_items: 수집할 최대 뉴스 수
+
+        Returns:
+            뉴스 리스트
+        """
+        news_list = []
+
+        try:
+            # Google News 영문 RSS URL
+            encoded_query = quote(query)
+            rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
+
+            print(f"[INFO] Google News (EN) RSS 피드 수집 중... (검색어: {query})")
+
+            # RSS 피드 파싱
+            feed = feedparser.parse(rss_url)
+
+            if not feed.entries:
+                print(f"[INFO] Google News (EN)에서 '{query}' 관련 뉴스를 찾을 수 없습니다.")
+                return news_list
+
+            for entry in feed.entries[:max_items]:
+                try:
+                    title = entry.get('title', '')
+                    link = entry.get('link', '')
+                    published = entry.get('published', '')
+                    summary = entry.get('summary', '')
+
+                    # 날짜 파싱
+                    date_str = self._parse_rss_date(published)
+
+                    news_item = {
+                        'title': title,
+                        'url': link,
+                        'date': date_str,
+                        'content': summary[:1000] if summary else '',
+                        'source': 'google_news_en'
+                    }
+
+                    news_list.append(news_item)
+
+                except Exception as e:
+                    print(f"[ERROR] RSS 아이템 처리 실패: {e}")
+                    continue
+
+            print(f"[INFO] Google News (EN)에서 {len(news_list)}개 뉴스 수집 완료")
+
+        except Exception as e:
+            print(f"[ERROR] Google News (EN) RSS 수집 실패: {e}")
+
+        return news_list
+
     def _parse_date(self, date_str: str) -> Optional[str]:
         """
         다양한 날짜 형식을 파싱하여 ISO 형식으로 변환합니다.

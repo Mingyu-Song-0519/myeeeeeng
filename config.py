@@ -39,6 +39,37 @@ US_TICKERS = {
     "Tesla": "TSLA",
 }
 
+# =============================================================================
+# 시장별 설정 (통합 관리)
+# =============================================================================
+MARKET_CONFIG = {
+    "KR": {
+        "name": "한국 (KRX)",
+        "suffix": ".KS",  # KOSPI (KOSDAQ은 .KQ)
+        "currency": "KRW",
+        "currency_symbol": "₩",
+        "realtime_api": "KIS",  # 한국투자증권
+        "news_sources": ["naver", "google_kr"],
+        "sentiment_model": "kr_finbert",  # 한글 딥러닝 모델
+    },
+    "US": {
+        "name": "미국 (NYSE/NASDAQ)",
+        "suffix": "",  # 접미사 없음
+        "currency": "USD",
+        "currency_symbol": "$",
+        "realtime_api": None,  # 실시간 미지원
+        "news_sources": ["yahoo", "google_en"],
+        "sentiment_model": "vader",  # 영문 VADER
+    }
+}
+
+# 환율 설정
+EXCHANGE_RATE_CONFIG = {
+    "source": "yfinance",  # yfinance 또는 한국은행 API
+    "pair": "USDKRW=X",  # yfinance 환율 심볼
+    "cache_ttl": 3600,  # 1시간 캐싱
+}
+
 # 데이터 수집 기간 (기본값)
 DEFAULT_PERIOD = "2y"  # 2년
 DEFAULT_INTERVAL = "1d"  # 일봉

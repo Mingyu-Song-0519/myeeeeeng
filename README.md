@@ -35,10 +35,20 @@ streamlit run app.py
 ## 주요 기능
 - 📊 실시간 주가 데이터 수집 (Yahoo Finance)
 - 📈 기술적 지표 자동 계산 (RSI, MACD, 볼린저밴드)
-- 🤖 AI 주가 예측 (LSTM, XGBoost)
+- 🤖 AI 주가 예측 (LSTM, XGBoost, Transformer 앙상블)
 - 📰 뉴스 수집 및 감성 분석 (네이버 금융, Google News)
-- 💬 한국어/영어 감성 분석 (키워드 기반)
+- 💬 한국어/영어 감성 분석 (KR-FinBERT, VADER)
 - 📱 웹 대시보드 시각화 (Streamlit)
+- 💼 포트폴리오 최적화 (Markowitz 평균-분산)
+- ⚠️ 리스크 관리 (VaR, CVaR 분석)
+
+## 🌍 해외 주식 기능 (NEW!)
+- 🇺🇸 미국 시장 지원 (NYSE/NASDAQ 4,000+ 종목)
+- 💱 실시간 환율 표시 (USD/KRW)
+- 🇰🇷 원화 환산가 자동 표시
+- 📰 영문 뉴스 수집 (Yahoo Finance, Google News EN)
+- 🧠 영문 감성 분석 (VADER 기반)
+- 📊 다중 시장 포트폴리오 지원
 
 ## 새로운 기능: 뉴스 감성 분석
 

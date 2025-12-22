@@ -17,6 +17,12 @@ try:
 except ImportError:
     TEXTBLOB_AVAILABLE = False
 
+try:
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer as VaderAnalyzer
+    VADER_AVAILABLE = True
+except ImportError:
+    VADER_AVAILABLE = False
+
 class SentimentAnalyzer:
     """텍스트 감성 분석기"""
     
@@ -30,6 +36,11 @@ class SentimentAnalyzer:
         self.dl_model = None
         self.dl_tokenizer = None
         self.dl_pipeline = None
+        self.vader_analyzer = None
+        
+        # VADER 분석기 초기화 (영문용)
+        if VADER_AVAILABLE:
+            self.vader_analyzer = VaderAnalyzer()
         
         if use_deep_learning:
             self._load_dl_model()
@@ -59,9 +70,57 @@ class SentimentAnalyzer:
             self.use_deep_learning = False
 
     def analyze_text(self, text: str) -> tuple:
-        """기본 감성 분석 (키워드/TextBlob)"""
+        """기본 감성 분석 (키워드/TextBlob) - 한국어용"""
         score = self.analyze_sentiment(text)
         return score, {}
+
+    def analyze_text_en(self, text: str) -> tuple:
+        """영문 텍스트 감성 분석 (VADER 기반)"""
+        if not text:
+            return 0.0, {}
+        
+        try:
+            # VADER 분석기 사용 (영문에 최적화)
+            if self.vader_analyzer:
+                scores = self.vader_analyzer.polarity_scores(text)
+                # compound 점수: -1.0 ~ 1.0
+                compound = scores['compound']
+                
+                # 레이블 결정
+                if compound >= 0.05:
+                    label = 'positive'
+                elif compound <= -0.05:
+                    label = 'negative'
+                else:
+                    label = 'neutral'
+                
+                return compound, {
+                    'label': label,
+                    'positive': scores['pos'],
+                    'negative': scores['neg'],
+                    'neutral': scores['neu']
+                }
+            
+            # VADER 사용 불가 시 TextBlob 폴백
+            elif TEXTBLOB_AVAILABLE:
+                blob = TextBlob(text)
+                polarity = blob.sentiment.polarity
+                
+                if polarity > 0.1:
+                    label = 'positive'
+                elif polarity < -0.1:
+                    label = 'negative'
+                else:
+                    label = 'neutral'
+                    
+                return polarity, {'label': label}
+            
+            # 둘 다 없으면 0 반환
+            return 0.0, {'label': 'neutral'}
+            
+        except Exception as e:
+            print(f"[ERROR] 영문 감성 분석 중 오류: {e}")
+            return 0.0, {'label': 'neutral'}
 
     def analyze_text_deep(self, text: str) -> tuple:
         """딥러닝 감성 분석"""
