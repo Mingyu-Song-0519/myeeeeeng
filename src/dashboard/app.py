@@ -52,23 +52,30 @@ def setup_page():
         .main {
             padding: 1rem;
         }
-        /* 모바일 텍스트 잘림 방지 */
+        /* 모바일 텍스트 잘림 방지 - 반응형 폰트 크기 */
         div[data-testid="stMetricValue"] {
-            font-size: 1.2rem !important;
+            font-size: clamp(0.8rem, 3vw, 1.2rem) !important; /* 화면 크기에 따라 자동 조정 */
             word-wrap: break-word !important;
             white-space: normal !important;
+            overflow-wrap: anywhere !important;
+            line-height: 1.2 !important;
         }
         div[data-testid="stMetricLabel"] {
-            font-size: 0.9rem !important;
+            font-size: clamp(0.65rem, 2.5vw, 0.9rem) !important; /* 라벨도 반응형 */
             word-wrap: break-word !important;
             white-space: normal !important;
+            overflow-wrap: anywhere !important;
+        }
+        div[data-testid="stMetricDelta"] {
+            font-size: clamp(0.6rem, 2vw, 0.8rem) !important; /* 변동값도 반응형 */
         }
         .stMetric {
             background-color: var(--background-secondary-color, rgba(128, 128, 128, 0.1));
-            padding: 0.5rem !important; /* 패딩 축소 */
+            padding: 0.3rem !important; /* 패딩 더 축소 */
             border-radius: 0.5rem;
             border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
-            min-height: 100px; /* 높이 확보 */
+            min-height: 80px; /* 높이 줄임 */
+            overflow: hidden;
         }
         
         /* Plotly 차트 모바일 스크롤 강제 허용 (핵심) */
