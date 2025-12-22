@@ -1810,15 +1810,17 @@ def main():
     st.title("📈 스마트 투자 분석 플랫폼")
     st.markdown("실시간 시세 · AI 예측 · 백테스팅 · 포트폴리오 최적화 · 리스크 관리 통합 플랫폼")
 
-    # 시장 선택
-    col_market, col_split = st.columns([3, 1])
-    with col_market:
+    # 사이드바 - 시장 선택
+    with st.sidebar:
+        st.markdown("### 🌍 시장 선택")
         market = st.radio(
-            "🌍 시장 선택",
+            "시장",
             ["🇰🇷 한국 (KRX)", "🇺🇸 미국 (NYSE/NASDAQ)"],
-            horizontal=True,
-            key="market_select"
+            horizontal=False,
+            key="market_select",
+            label_visibility="collapsed"
         )
+        st.divider()
     
     # 시장 변경 감지 및 상태 저장/복원
     previous_market = st.session_state.get('previous_market', None)
