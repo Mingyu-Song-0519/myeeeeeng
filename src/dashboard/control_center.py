@@ -1,5 +1,5 @@
 """
-Investment Control Center - Phase 13
+Investment Control Center - Phase 13 (수정됨)
 투자 컨트롤 센터 (통합 대시보드)
 
 모든 분석을 한눈에: 시장 체력, 변동성, 팩터 TOP 5, 매크로 환경
@@ -57,14 +57,18 @@ def render_market_health():
         
         analyzer = MarketBreadthAnalyzer()
         
-        # 시장 폭 점수 계산
-        breadth_score = analyzer.calculate_market_breadth_score()
-        ad_ratio = breadth_score.get("advance_decline_ratio", 0)
+        # 실제 메서드: get_breadth_summary() 사용
+        breadth_summary = analyzer.get_breadth_summary()
         
-        # 상승/하락 비율
-        advancing = breadth_score.get("advancing_stocks", 0)
-        declining = breadth_score.get("declining_stocks", 0)
-        total = advancing + declining
+        # advance_decline 정보 추출
+        ad_data = breadth_summary.get("advance_decline", {})
+        ad_ratio = ad_data.get("ratio", 0)
+        
+        # 상승/하락 종목 수
+        advancing = ad_data.get("advancing", 0)
+        declining = ad_data.get("declining", 0)
+        unchanged = ad_data.get("unchanged", 0)
+        total = advancing + declining + unchanged
         
         # 색상 코드
         if ad_ratio > 1.5:
@@ -118,13 +122,18 @@ def render_volatility_stress():
         
         analyzer = VolatilityAnalyzer()
         vix = analyzer.get_current_vix()
-        regime = analyzer.get_volatility_regime(vix) if vix else "알 수 없음"
+        
+        # 실제 메서드: volatility_regime() - 튜플 반환 (regime, color)
+        if vix:
+            regime, _ = analyzer.volatility_regime()
+        else:
+            regime = "알 수 없음"
         
         # 색상 코드
         if "저변동성" in regime:
             color = "🟢"
             bg_color = "#e8f5e9"
-        elif "중간" in regime:
+        elif "중간" in regime or "중변동성" in regime:
             color = "🟡"
             bg_color = "#fff9c4"
         else:
@@ -141,14 +150,14 @@ def render_volatility_stress():
         </div>
         """, unsafe_allow_html=True)
         
-        # VIX 히스토리 차트
-        vix_history = analyzer.get_vix_history(days=30)
+        # VIX 히스토리 차트 (실제 메서드: get_vix_data)
+        vix_history = analyzer.get_vix_data(period="1mo")
         
         if vix_history is not None and not vix_history.empty:
             fig = go.Figure()
             fig.add_trace(go.Scatter(
-                x=vix_history.index,
-                y=vix_history['Close'],
+                x=vix_history['date'] if 'date' in vix_history.columns else vix_history.index,
+                y=vix_history['close'],
                 mode='lines',
                 fill='tozeroy',
                 line=dict(color='#ff9800', width=2)
@@ -239,7 +248,7 @@ def render_factor_top5():
 
 
 def render_macro_summary():
-    """매크로 환경 요약 (Phase 9-6)"""
+    """매크로 환경 요약 (Phase 9-6) - 수정됨"""
     try:
         from src.analyzers.macro_analyzer import MacroAnalyzer
         
@@ -247,36 +256,39 @@ def render_macro_summary():
         macro_data = analyzer.get_macro_summary()
         
         if macro_data:
-            # 금리
-            treasury_10y = macro_data.get("treasury_10y", {})
-            rate = treasury_10y.get("current")
-            trend = treasury_10y.get("trend", "→")
+            # 금리 (실제 구조: treasury_yields -> us_10y)
+            treasury_yields = macro_data.get("treasury_yields", {})
+            us_10y_data = treasury_yields.get("us_10y", {})
+            rate = us_10y_data.get("current")
+            change_pct = us_10y_data.get("change_pct", 0)
+            trend = f"+{change_pct:.2f}%" if change_pct > 0 else f"{change_pct:.2f}%" if change_pct != 0 else "→"
             
             st.metric(
                 label="🇺🇸 미국 10년물 금리",
                 value=f"{rate:.2f}%" if rate else "N/A",
-                delta=trend
+                delta=trend if rate else None
             )
             
-            # 달러 인덱스
-            dollar_idx = macro_data.get("dollar_index", {})
-            dxy = dollar_idx.get("current")
+            # 달러 인덱스 (실제 구조: dollar_strength -> dxy)
+            dollar_strength = macro_data.get("dollar_strength", {})
+            dxy_data = dollar_strength.get("dxy", {})
+            dxy = dxy_data.get("current")
             
             st.metric(
                 label="💵 달러 인덱스 (DXY)",
                 value=f"{dxy:.2f}" if dxy else "N/A"
             )
             
-            # USD/KRW
-            usdkrw = macro_data.get("usdkrw", {})
-            krw = usdkrw.get("current")
+            # USD/KRW (실제 구조: dollar_strength -> usd_krw)
+            usdkrw_data = dollar_strength.get("usd_krw", {})
+            krw = usdkrw_data.get("current")
             
             st.metric(
                 label="🇰🇷 USD/KRW",
                 value=f"₩{krw:.0f}" if krw else "N/A"
             )
             
-            # VIX
+            # VIX (실제 구조: vix)
             vix_data = macro_data.get("vix", {})
             vix = vix_data.get("current")
             
@@ -286,11 +298,13 @@ def render_macro_summary():
             )
             
             # 전체 해석
-            interpretation = macro_data.get("interpretation", "데이터 분석 중...")
+            environment = macro_data.get("environment", "분석 중...")
+            yield_interp = treasury_yields.get("interpretation", "")
+            dollar_interp = dollar_strength.get("interpretation", "")
             
             st.markdown("---")
             st.markdown(f"**📝 종합 해석**")
-            st.info(interpretation)
+            st.info(f"{environment}\n\n금리: {yield_interp}\n달러: {dollar_interp}")
         
     except Exception as e:
         st.error(f"매크로 데이터 로드 실패: {e}")
