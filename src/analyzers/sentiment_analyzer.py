@@ -1,5 +1,6 @@
 """
 뉴스 및 텍스트 감성 분석 모듈
+Phase F: LLMSentimentAnalyzer (Gemini) 통합
 """
 from typing import List, Dict, Optional
 import re
@@ -23,24 +24,56 @@ try:
 except ImportError:
     VADER_AVAILABLE = False
 
+# Phase F: LLM Sentiment Analyzer (Gemini)
+try:
+    from src.infrastructure.sentiment.llm_sentiment_analyzer import LLMSentimentAnalyzer
+    LLM_SENTIMENT_AVAILABLE = True
+except ImportError:
+    LLM_SENTIMENT_AVAILABLE = False
+
 class SentimentAnalyzer:
-    """텍스트 감성 분석기"""
+    """
+    텍스트 감성 분석기
     
-    def __init__(self, use_deep_learning: bool = False):
+    지원 모드:
+    - 기본: 키워드 + TextBlob
+    - 딥러닝: KR-FinBert-SC
+    - LLM: Gemini API (Phase F)
+    """
+    
+    def __init__(self, use_deep_learning: bool = False, use_llm: bool = False):
         """
         초기화
         Args:
-            use_deep_learning: 딥러닝 모델 사용 여부
+            use_deep_learning: 딥러닝 모델(FinBERT) 사용 여부
+            use_llm: Gemini LLM 감성 분석 사용 여부 (Phase F)
         """
         self.use_deep_learning = use_deep_learning
+        self.use_llm = use_llm
         self.dl_model = None
         self.dl_tokenizer = None
         self.dl_pipeline = None
         self.vader_analyzer = None
+        self.llm_analyzer = None
         
         # VADER 분석기 초기화 (영문용)
         if VADER_AVAILABLE:
             self.vader_analyzer = VaderAnalyzer()
+        
+        # LLM 분석기 초기화 (Gemini)
+        if use_llm and LLM_SENTIMENT_AVAILABLE:
+            try:
+                # GeminiClient 생성하여 전달
+                from src.infrastructure.external.gemini_client import GeminiClient
+                gemini_client = GeminiClient()
+                self.llm_analyzer = LLMSentimentAnalyzer(llm_client=gemini_client)
+                print("[INFO] Gemini LLM 감성 분석기 초기화 완료")
+            except Exception as e:
+                print(f"[WARNING] LLM 분석기 초기화 실패: {e}. 기본 분석 사용.")
+                self.use_llm = False
+        elif use_llm and not LLM_SENTIMENT_AVAILABLE:
+            print("[WARNING] LLMSentimentAnalyzer를 불러올 수 없습니다. 기본 분석 사용.")
+            self.use_llm = False
         
         if use_deep_learning:
             self._load_dl_model()
@@ -68,6 +101,27 @@ class SentimentAnalyzer:
         except Exception as e:
             print(f"[ERROR] 모델 로드 실패: {e}")
             self.use_deep_learning = False
+
+    def analyze_text_llm(self, text: str) -> tuple:
+        """
+        LLM(Gemini) 기반 감성 분석
+        
+        Returns:
+            tuple: (점수, 상세정보 dict)
+        """
+        if not self.llm_analyzer:
+            return self.analyze_text(text)
+        
+        try:
+            result = self.llm_analyzer.analyze(text)
+            return result.score, {
+                'label': result.label,
+                'confidence': result.confidence,
+                'reasoning': result.reasoning
+            }
+        except Exception as e:
+            print(f"[WARNING] LLM 감성 분석 실패: {e}. 기본 분석 사용.")
+            return self.analyze_text(text)
 
     def analyze_text(self, text: str) -> tuple:
         """기본 감성 분석 (키워드/TextBlob) - 한국어용"""

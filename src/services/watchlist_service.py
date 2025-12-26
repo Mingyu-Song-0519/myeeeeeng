@@ -2,6 +2,7 @@
 Watchlist Service
 애플리케이션 계층: 관심 종목 비즈니스 로직
 Phase 20 투자 성향 + Phase 21 Market Buzz 통합
+Phase F: MarketDataService 마이그레이션
 """
 import logging
 import concurrent.futures
@@ -14,8 +15,17 @@ from src.domain.watchlist import (
     IWatchlistRepository,
     HeatLevel
 )
-from src.collectors.stock_collector import StockDataCollector
 from src.analyzers.technical_analyzer import TechnicalAnalyzer
+
+# Phase F: MarketDataService 우선 사용
+try:
+    from src.services.market_data_service import MarketDataService
+    MARKET_SERVICE_AVAILABLE = True
+except ImportError:
+    MARKET_SERVICE_AVAILABLE = False
+    MarketDataService = None
+
+from src.collectors.stock_collector import StockDataCollector
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +56,14 @@ class WatchlistService:
             buzz_service: Phase 21 Market Buzz 서비스 (선택)
         """
         self.watchlist_repo = watchlist_repo
+        
+        # Phase F: MarketDataService 우선 사용
+        if MARKET_SERVICE_AVAILABLE:
+            self._market_service = MarketDataService(market="KR")
+        else:
+            self._market_service = None
         self.stock_collector = stock_collector or StockDataCollector()
+        
         self.profile_repo = profile_repo
         self.buzz_service = buzz_service
         

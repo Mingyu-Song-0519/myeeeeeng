@@ -1,377 +1,193 @@
-# Phase 21: Market Heat & Buzz 기능 개발
+# 📌 관심 종목(Watchlist) 기능 구현 계획
 
-> **목표**: 불안정한 Google Trends 기반 '소셜 트렌드' 탭을 **거래량 이상 감지(Plan A)** + **섹터 히트맵(Plan C)**으로 대체
+**Status**: 🔄 계획 검토 대기
+**Created**: 2025-12-25
 
 ---
 
 ## 📋 기능 개요
 
-### 기존 vs 신규 비교
-
-| 항목 | 기존 (Social Trend) | 신규 (Market Buzz) |
-|------|---------------------|-------------------|
-| 데이터 소스 | Google Trends API | yfinance (거래량, 가격) |
-| 안정성 | ❌ 자주 실패 | ✅ 100% 신뢰 가능 |
-| 측정 대상 | 검색량 (간접적) | 거래량/변동성 (직접적) |
-| 분석 단위 | 개별 종목 | 개별 종목 + 섹터 전체 |
+### 목표
+사용자가 선택한 관심 종목들을 한 화면에서 모니터링할 수 있는 기능 구현
 
 ### 핵심 기능
-
-1. **🔥 Volume Anomaly Detector**: 평소 대비 거래량 급증 종목 감지
-2. **📊 Sector Heatmap**: 업종별 등락률 히트맵 시각화
-3. **⚡ Buzz Score**: 관심도 점수 (0~100) 계산
+1. **관심 종목 추가/삭제** - 종목 검색 및 관리
+2. **현재가 조회** - 실시간/지연 시세 표시
+3. **간단 분석** - 등락률, 기술지표 요약
+4. **알림 연동** - 가격 변동 시 알림 (선택)
 
 ---
 
 ## 🏗️ Clean Architecture 설계
 
-```mermaid
-graph TD
-    subgraph Presentation["Presentation Layer (UI)"]
-        A1[market_buzz_view.py]
-    end
-    
-    subgraph Application["Application Layer (Use Cases)"]
-        B1[MarketBuzzService]
-    end
-    
-    subgraph Domain["Domain Layer (Entities)"]
-        C1[BuzzScore]
-        C2[VolumeAnomaly]
-        C3[SectorHeat]
-    end
-    
-    subgraph Infrastructure["Infrastructure Layer"]
-        D1[StockDataCollector]
-        D2[SectorRepository]
-    end
-    
-    A1 --> B1
-    B1 --> C1
-    B1 --> C2
-    B1 --> C3
-    B1 --> D1
-    B1 --> D2
+### 레이어 구조
+```
+┌─────────────────────────────────────────┐
+│         Presentation Layer              │
+│   watchlist_view.py (Streamlit UI)      │
+├─────────────────────────────────────────┤
+│         Application Layer               │
+│   watchlist_service.py                  │
+├─────────────────────────────────────────┤
+│           Domain Layer                  │
+│   entities/watchlist.py                 │
+│   repositories/watchlist_repository.py  │
+├─────────────────────────────────────────┤
+│       Infrastructure Layer              │
+│   repositories/sqlite_watchlist_repo.py │
+└─────────────────────────────────────────┘
 ```
 
 ---
 
-## 📁 파일 구조
+## 📦 구현 파일 목록
 
-```
-src/
-├── domain/
-│   └── market_buzz/
-│       ├── __init__.py
-│       ├── entities/
-│       │   ├── __init__.py
-│       │   ├── buzz_score.py        ← [NEW] BuzzScore 엔티티
-│       │   ├── volume_anomaly.py    ← [NEW] VolumeAnomaly 엔티티
-│       │   └── sector_heat.py       ← [NEW] SectorHeat 엔티티
-│       └── value_objects/
-│           └── heat_level.py        ← [NEW] HeatLevel VO (HOT/WARM/COLD)
-│
-├── infrastructure/
-│   └── repositories/
-│       └── sector_repository.py     ← [NEW] 섹터-종목 매핑 저장소
-│
-├── services/
-│   └── market_buzz_service.py       ← [NEW] 핵심 비즈니스 로직
-│
-└── dashboard/
-    └── views/
-        └── market_buzz_view.py      ← [NEW] Streamlit UI
-```
+### Domain Layer (도메인)
 
----
-
-## 📦 Proposed Changes
-
-### Domain Layer
-
-#### [NEW] `buzz_score.py`
+#### [NEW] `src/domain/watchlist/entities/watchlist.py`
 ```python
 @dataclass
-class BuzzScore:
-    """종목별 관심도 점수"""
+class WatchlistItem:
+    id: str
+    user_id: str
     ticker: str
-    name: str
-    score: float  # 0~100
-    volume_ratio: float  # 평소 대비 거래량 비율
-    volatility_ratio: float  # 평소 대비 변동성 비율
-    heat_level: str  # "HOT" | "WARM" | "COLD"
-    last_updated: datetime
+    stock_name: str
+    added_at: datetime
+    notes: Optional[str] = None
+    
+@dataclass 
+class WatchlistSummary:
+    item: WatchlistItem
+    current_price: float
+    change_pct: float
+    volume: int
+    rsi: Optional[float]
+    signal: str  # "매수", "중립", "매도"
 ```
 
-#### [NEW] `volume_anomaly.py`
+#### [NEW] `src/domain/watchlist/repositories/interfaces.py`
 ```python
-@dataclass
-class VolumeAnomaly:
-    """거래량 이상 감지 결과"""
-    ticker: str
-    name: str
-    current_volume: int
-    avg_volume: int
-    volume_ratio: float
-    is_spike: bool  # ratio > 2.0
-    detected_at: datetime
+class WatchlistRepository(ABC):
+    @abstractmethod
+    def add_item(self, user_id: str, ticker: str, name: str) -> WatchlistItem
+    
+    @abstractmethod
+    def remove_item(self, user_id: str, ticker: str) -> bool
+    
+    @abstractmethod
+    def get_all(self, user_id: str) -> List[WatchlistItem]
+    
+    @abstractmethod
+    def exists(self, user_id: str, ticker: str) -> bool
 ```
 
-#### [NEW] `sector_heat.py`
+---
+
+### Infrastructure Layer (인프라)
+
+#### [NEW] `src/infrastructure/repositories/watchlist_repository.py`
+- SQLite 기반 영속성 구현
+- `watchlist` 테이블 생성/관리
+- 캐싱 레이어 포함
+
+---
+
+### Application Layer (서비스)
+
+#### [NEW] `src/services/watchlist_service.py`
 ```python
-@dataclass
-class SectorHeat:
-    """섹터별 온도"""
-    sector_name: str
-    avg_change_pct: float
-    top_gainers: List[str]
-    top_losers: List[str]
-    heat_level: str
-    stock_count: int
+class WatchlistService:
+    def add_to_watchlist(user_id, ticker, name) -> WatchlistItem
+    def remove_from_watchlist(user_id, ticker) -> bool
+    def get_watchlist_with_prices(user_id) -> List[WatchlistSummary]
+    def get_watchlist_analysis(user_id) -> Dict  # 종합 분석
 ```
 
 ---
 
-### Infrastructure Layer
+### Presentation Layer (UI)
 
-#### [NEW] `sector_repository.py` (외부 API 연동 방식)
+#### [NEW] `src/dashboard/views/watchlist_view.py`
+- 관심 종목 목록 테이블
+- 종목 추가/삭제 UI
+- 현재가 및 등락률 표시
+- 간단 기술지표 (RSI, MACD 신호)
 
-```python
-class SectorRepository:
-    """섹터-종목 매핑 관리 (외부 API 기반)"""
-    
-    def __init__(self):
-        self._cache = {}  # {market: {sector: [tickers]}}
-        self._cache_ttl = 86400  # 24시간
-        self._last_update = {}
-    
-    # === 미국 시장: Yahoo Finance Screener ===
-    def fetch_us_sectors(self) -> Dict[str, List[str]]:
-        """
-        Yahoo Finance Screener API로 S&P 500 섹터별 종목 조회
-        
-        GICS Sector 분류:
-        - Information Technology
-        - Health Care
-        - Financials
-        - Consumer Discretionary
-        - Communication Services
-        - Industrials
-        - Consumer Staples
-        - Energy
-        - Utilities
-        - Real Estate
-        - Materials
-        """
-        # yfinance Ticker.info['sector'] 활용
-        # S&P 500 구성 종목 리스트를 먼저 가져온 후
-        # 각 종목의 sector 정보로 그룹화
-    
-    # === 한국 시장: KRX API ===
-    def fetch_kr_sectors(self) -> Dict[str, List[str]]:
-        """
-        KRX OpenAPI로 KOSPI/KOSDAQ 업종별 종목 조회
-        
-        주요 업종:
-        - 반도체
-        - 2차전지/배터리
-        - 바이오/제약
-        - 자동차
-        - 화학
-        - 철강/금속
-        - 건설
-        - 은행/증권
-        - IT/소프트웨어
-        - 조선
-        
-        API: http://data.krx.co.kr
-        """
-        # KRX 공개 API 사용 (인증키 불필요)
-        # 또는 FinanceDataReader 라이브러리 활용
-    
-    def get_sectors(self, market: str, force_refresh: bool = False) -> Dict[str, List[str]]:
-        """캐시된 섹터 데이터 반환 (필요 시 갱신)"""
-        if force_refresh or self._should_refresh(market):
-            if market == "US":
-                self._cache[market] = self.fetch_us_sectors()
-            elif market == "KR":
-                self._cache[market] = self.fetch_kr_sectors()
-            self._last_update[market] = datetime.now()
-        
-        return self._cache.get(market, {})
-    
-    def get_stocks_by_sector(self, market: str, sector: str) -> List[str]:
-        """특정 섹터의 종목 리스트 반환"""
-        sectors = self.get_sectors(market)
-        return sectors.get(sector, [])
-    
-    def _should_refresh(self, market: str) -> bool:
-        """캐시 갱신 필요 여부 판단"""
-        if market not in self._last_update:
-            return True
-        elapsed = (datetime.now() - self._last_update[market]).total_seconds()
-        return elapsed > self._cache_ttl
+#### [MODIFY] `src/dashboard/app.py`
+- 새 탭 또는 사이드바 위젯 추가: "⭐ 관심 종목"
+
+---
+
+## 🎨 UI 디자인
+
+### 관심 종목 화면 구성
+
 ```
+┌─────────────────────────────────────────────────────────┐
+│ ⭐ 관심 종목 (5개)                    [+ 종목 추가]     │
+├─────────────────────────────────────────────────────────┤
+│ 종목명      │ 현재가    │ 등락률  │ RSI  │ 신호 │ 삭제 │
+├─────────────────────────────────────────────────────────┤
+│ 삼성전자    │ 78,500    │ +2.3%   │  45  │ 중립 │  🗑️  │
+│ SK하이닉스  │ 195,000   │ -1.2%   │  32  │ 매수 │  🗑️  │
+│ NAVER      │ 215,500   │ +0.8%   │  68  │ 중립 │  🗑️  │
+│ 카카오      │ 45,200    │ -0.5%   │  28  │ 매수 │  🗑️  │
+│ 현대차      │ 245,000   │ +1.5%   │  55  │ 중립 │  🗑️  │
+└─────────────────────────────────────────────────────────┘
 
-**의존성 추가:**
-```bash
-pip install financedatareader  # KRX 데이터 (선택)
-# yfinance는 이미 설치되어 있음
+┌─────────────────────────────────────────────────────────┐
+│ 📊 관심 종목 요약                                        │
+├─────────────────────────────────────────────────────────┤
+│ 📈 상승: 3개  │  📉 하락: 2개  │  📊 전체 평균: +0.58%   │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### Application Layer
+## 📅 구현 단계
 
-#### [NEW] `market_buzz_service.py`
-```python
-class MarketBuzzService:
-    """시장 관심도 분석 서비스"""
-    
-    def __init__(self, sector_repo: SectorRepository):
-        self.sector_repo = sector_repo
-        self.collector = StockDataCollector()
-    
-    def calculate_buzz_score(self, ticker: str) -> BuzzScore:
-        """개별 종목 관심도 점수 계산"""
-        # 1. 20일 평균 거래량 대비 현재 거래량 비율
-        # 2. 20일 평균 변동성 대비 현재 변동성 비율
-        # 3. 두 비율을 결합하여 0~100 점수화
-    
-    def detect_volume_anomalies(
-        self, 
-        tickers: List[str],
-        threshold: float = 2.0
-    ) -> List[VolumeAnomaly]:
-        """거래량 급증 종목 감지"""
-    
-    def get_sector_heatmap(self, market: str = "KR") -> List[SectorHeat]:
-        """섹터별 온도 히트맵 데이터"""
-    
-    def get_top_buzz_stocks(self, market: str, top_n: int = 10) -> List[BuzzScore]:
-        """관심도 상위 종목 리스트"""
-```
+### Phase 1: 도메인 레이어 (1일)
+- [ ] `WatchlistItem`, `WatchlistSummary` 엔티티 생성
+- [ ] `WatchlistRepository` 인터페이스 정의
+
+### Phase 2: 인프라 레이어 (1일)
+- [ ] SQLite 테이블 스키마 설계
+- [ ] `SqliteWatchlistRepository` 구현
+
+### Phase 3: 서비스 레이어 (1일)
+- [ ] `WatchlistService` 구현
+- [ ] 주가 조회 및 기술지표 통합
+
+### Phase 4: UI 레이어 (1일)
+- [ ] `watchlist_view.py` 생성
+- [ ] `app.py`에 탭/위젯 추가
+- [ ] 종목 추가 다이얼로그
+
+### Phase 5: 통합 테스트 (0.5일)
+- [ ] 전체 흐름 테스트
+- [ ] 기존 "관심 종목 추가" 버튼 연동
 
 ---
 
-### Presentation Layer
+## ⚠️ 고려사항
 
-#### [NEW] `market_buzz_view.py`
-```python
-def render_market_buzz_tab():
-    """Market Heat & Buzz 탭 렌더링"""
-    
-    st.subheader("🔥 Market Heat & Buzz")
-    
-    # 1. 섹터 히트맵 (Plotly Treemap)
-    _render_sector_heatmap()
-    
-    # 2. 거래량 급증 알림
-    _render_volume_anomalies()
-    
-    # 3. 관심도 Top 10
-    _render_top_buzz_stocks()
-```
+### 사용자 식별
+- 현재: `st.session_state` 기반 임시 ID
+- 권장: 이메일 기반 사용자 ID (이미 구현됨)
+
+### 주가 조회 제한
+- yfinance 무료 API 사용
+- 캐싱으로 호출 횟수 최소화 (5분 TTL)
+
+### 기존 기능 연동
+- `ranking_view.py`의 "관심 종목 추가" 버튼 → `WatchlistService.add_to_watchlist()` 호출로 변경
 
 ---
 
-## 🎨 UI 디자인 (예상)
+## ✅ 승인 요청
 
-### 섹터 히트맵
-- **Plotly Treemap** 사용
-- 색상: 상승(초록) ~ 하락(빨강) 그라데이션
-- 크기: 시가총액 또는 거래대금 비례
-
-### 거래량 급증 알림
-- **카드 형태**로 상위 5개 종목 표시
-- "🚀 삼성전자: 평소 대비 **320%** 거래량 폭발!"
-
-### 관심도 Top 10
-- **Progress Bar** 형태로 Buzz Score 시각화
-- 점수별 색상 (🔴 HOT > 🟠 WARM > 🔵 COLD)
-
----
-
-## 🔄 기존 코드 처리
-
-| 파일 | 처리 방식 |
-|------|----------|
-| [social_trend_service.py](file:///D:/Stock/src/services/social_trend_service.py) | **DEPRECATE** (삭제하지 않고 유지, import만 제거) |
-| [social_analyzer.py](file:///D:/Stock/src/analyzers/social_analyzer.py) | **DEPRECATE** |
-| [app.py](file:///D:/Stock/src/dashboard/app.py) 소셜 트렌드 탭 | **REPLACE** with `market_buzz_view.py` 호출 |
-
----
-
-## ✅ Verification Plan
-
-### 1. Unit Tests
-```bash
-# 테스트 파일: tests/unit/test_market_buzz_service.py
-pytest tests/unit/test_market_buzz_service.py -v
-```
-
-**테스트 케이스:**
-- `test_buzz_score_calculation`: 점수가 0~100 범위인지 확인
-- `test_volume_anomaly_detection`: threshold 초과 시 is_spike=True
-- `test_sector_heatmap_structure`: 반환 데이터 구조 검증
-
-### 2. Integration Tests
-```bash
-# 테스트 파일: tests/integration/test_market_buzz_e2e.py
-pytest tests/integration/test_market_buzz_e2e.py -v
-```
-
-**테스트 케이스:**
-- 실제 yfinance 데이터로 서비스 호출
-- 섹터별 데이터 집계 검증
-
-### 3. Manual Browser Test
-1. `streamlit run src/dashboard/app.py` 실행
-2. 📈 소셜 트렌드(또는 리네이밍된 탭) 클릭
-3. **확인 사항:**
-   - 섹터 히트맵이 정상 렌더링되는가?
-   - 거래량 급증 종목이 표시되는가?
-   - 에러 없이 전체 페이지가 로드되는가?
-
----
-
-## 📅 구현 순서
-
-1. **Phase 21.1**: Domain Layer (Entities, VOs)
-2. **Phase 21.2**: Infrastructure Layer (SectorRepository)
-3. **Phase 21.3**: Application Layer (MarketBuzzService)
-4. **Phase 21.4**: Presentation Layer (market_buzz_view.py)
-5. **Phase 21.5**: app.py 통합 및 기존 탭 교체
-6. **Phase 21.6**: 테스트 작성 및 검증
-
----
-
-## ⚠️ Implementation Notes
-
-> [!IMPORTANT]
-> **외부 API 연동 방식 채택**
-> 
-> **미국 시장:**
-> - **데이터 소스**: Yahoo Finance (yfinance library)
-> - **방법**: S&P 500 구성 종목을 순회하며 `Ticker.info['sector']` 정보로 그룹화
-> - **장점**: 실시간 업데이트, 정확한 GICS 섹터 분류
-> - **단점**: API 호출 횟수 많음 (500개 종목) → 캐싱 필수
-> 
-> **한국 시장:**
-> - **데이터 소스**: KRX OpenAPI 또는 FinanceDataReader
-> - **방법**: KOSPI/KOSDAQ 업종별 종목 리스트 직접 조회
-> - **장점**: 공식 데이터, 무료, 인증키 불필요
-> - **단점**: 응답 속도가 느릴 수 있음 → 24시간 캐싱
-> 
-> **캐싱 전략:**
-> - TTL: 24시간 (섹터 구성은 자주 바뀌지 않음)
-> - 첫 로드 시간: ~30초 (미국 시장 500개 종목 조회)
-> - 이후 로드: 즉시 (캐시 사용)
-
-> [!WARNING]
-> **Rate Limiting 주의**
-> Yahoo Finance는 짧은 시간에 많은 요청 시 일시적으로 차단될 수 있습니다.
-> 배치 요청 시 `time.sleep(0.1)` 등으로 딜레이를 추가하세요.
+위 구현 계획을 검토 후 승인해주세요.
+승인 시 Phase 1부터 구현을 시작하겠습니다.
 
 ---
 ---
@@ -379,7 +195,7 @@ pytest tests/integration/test_market_buzz_e2e.py -v
 # 📋 기획서 검토 및 개선 권장사항
 
 > **검토일**: 2025-12-25
-> **검토 기준**: Feature Planner Skill + Clean Architecture + Phase 20 통합
+> **검토 기준**: Feature Planner Skill + Clean Architecture + Phase 20/21 통합
 > **검토자**: Claude Code (Sonnet 4.5)
 
 ---
@@ -389,645 +205,715 @@ pytest tests/integration/test_market_buzz_e2e.py -v
 ### 1. Clean Architecture 준수 ⭐⭐⭐⭐⭐
 
 **평가**:
-- ✅ Domain/Application/Infrastructure/Presentation 명확히 분리
-- ✅ Repository Pattern 적용 (SectorRepository)
-- ✅ Entity/VO 구분 명확 (BuzzScore, VolumeAnomaly, HeatLevel)
-- ✅ Service Layer 의존성 주입 설계
+- ✅ Domain/Application/Infrastructure/Presentation 4계층 명확히 분리
+- ✅ Repository Pattern 적용 (IWatchlistRepository)
+- ✅ Entity 설계 적절 (WatchlistItem, WatchlistSummary)
+- ✅ 의존성 역전 원칙(DIP) 준수
 
 **기대 효과**:
 - 테스트 가능성 향상 (Mock Repository 주입 가능)
-- 데이터 소스 교체 용이 (yfinance → 다른 API)
+- 데이터 소스 교체 용이 (SQLite → PostgreSQL 등)
 
 ---
 
-### 2. 기술적 실현 가능성 ⭐⭐⭐⭐⭐
+### 2. 기존 인프라 활용 ⭐⭐⭐⭐
 
 **평가**:
-- ✅ 기존 yfinance 인프라 활용 (추가 API 키 불필요)
-- ✅ Google Trends 의존성 제거로 안정성 향상
-- ✅ 24시간 캐싱 전략 합리적
+- ✅ yfinance 기존 인프라 재사용
+- ✅ SQLite 기존 패턴 활용 (Phase 20 ProfileRepository 참조)
+- ✅ Streamlit 캐싱 패턴 일관성
 
 ---
 
-### 3. UI/UX 설계 ⭐⭐⭐⭐
+### 3. 간결한 MVP 범위 ⭐⭐⭐⭐
 
 **평가**:
-- ✅ Plotly Treemap (섹터 히트맵) - 직관적
-- ✅ 카드 형태 알림 - 사용자 친화적
-- ✅ Progress Bar 시각화 - 명확한 정보 전달
+- ✅ 핵심 기능에 집중 (추가/삭제/조회)
+- ✅ 알림 기능을 선택사항으로 명시
+- ✅ 4.5일 일정 합리적
 
 ---
 
 ## 🔴 중대한 누락 사항
 
-### 1. Phase 20 투자 성향 연동 미정의 (우선순위: ⭐⭐⭐⭐⭐)
+### 1. Phase 20 투자 성향 프로필 연동 미정의 (우선순위: ⭐⭐⭐⭐⭐)
 
 **문제**:
-- ✅ Market Buzz 기능은 정의됨
+- ✅ Watchlist 기본 기능은 정의됨
 - ❌ **Phase 20 투자 성향 프로필과의 통합 방안 없음**
-- ❌ 사용자 성향에 맞는 Buzz 종목 필터링 로직 없음
+- ❌ 관심 종목의 성향 적합도 분석 로직 없음
+- ❌ 사용자 성향에 맞는 종목 추천 기능 없음
 
 **영향**:
 - Phase 20에서 구축한 투자 성향 프로필이 활용되지 않음
-- 개인화 추천 시스템과 단절된 독립적 기능으로 전락
+- 단순 종목 목록 관리로 전락 → 차별화 요소 부족
 - 사용자 경험 일관성 저하
 
 **해결 방안**:
 
-#### Option A: ProfileAwareBuzzService (권장)
+#### Option A: WatchlistSummary에 Profile Fit 추가 (권장)
 
 ```python
-# src/services/profile_aware_buzz_service.py
-class ProfileAwareBuzzService:
-    """
-    투자 성향 기반 맞춤 Buzz 분석 서비스
-    Phase 20 InvestorProfile과 연동
-    """
+# src/domain/watchlist/entities/watchlist.py (수정)
+@dataclass
+class WatchlistSummary:
+    item: WatchlistItem
+    current_price: float
+    change_pct: float
+    volume: int
+    rsi: Optional[float]
+    signal: str  # "매수", "중립", "매도"
 
-    def __init__(
-        self,
-        market_buzz_service: MarketBuzzService,
-        profile_repo: IProfileRepository
-    ):
-        self.buzz_service = market_buzz_service
-        self.profile_repo = profile_repo
-
-    def get_personalized_buzz_stocks(
-        self,
-        user_id: str,
-        market: str = "KR",
-        top_n: int = 10
-    ) -> List[BuzzScore]:
-        """
-        사용자 성향에 맞는 관심 종목 필터링
-
-        로직:
-        1. MarketBuzzService에서 전체 Buzz 종목 조회
-        2. 사용자 프로필 로드
-        3. 프로필 기반 필터링:
-           - 안정형: 변동성 높은 종목 제외
-           - 공격투자형: HOT 종목만 표시
-           - 선호 섹터: 해당 섹터 우선 표시
-        """
-        # 1. 전체 Buzz 종목 조회
-        all_buzz = self.buzz_service.get_top_buzz_stocks(market, top_n=50)
-
-        # 2. 프로필 로드
-        profile = self.profile_repo.load(user_id)
-        if not profile:
-            # 프로필 없으면 전체 반환
-            return all_buzz[:top_n]
-
-        # 3. 성향 기반 필터링
-        filtered = []
-        for buzz in all_buzz:
-            # 변동성 체크
-            if profile.risk_tolerance.value <= 40:  # 안정형/안정추구형
-                if buzz.volatility_ratio > 2.0:
-                    continue  # 변동성 높은 종목 제외
-
-            # 선호 섹터 우선순위
-            sector = self._get_stock_sector(buzz.ticker)
-            if sector in profile.preferred_sectors:
-                buzz.score += 10  # 보너스 점수
-
-            filtered.append(buzz)
-
-        # 점수순 정렬 후 상위 N개
-        filtered.sort(key=lambda x: x.score, reverse=True)
-        return filtered[:top_n]
-
-    def _get_stock_sector(self, ticker: str) -> str:
-        """종목의 섹터 조회 (캐싱)"""
-        # yfinance로 섹터 정보 조회
-        pass
+    # ===== Phase 20 통합 (NEW) =====
+    profile_fit_score: Optional[float] = None  # 투자 성향 적합도 (0~100)
+    profile_warning: Optional[str] = None  # 성향 불일치 경고
+    # 예: "이 종목은 고변동성이므로 안정형 투자자에게 적합하지 않습니다"
 ```
 
-#### Option B: BuzzScore에 Profile Fit 추가
+#### Option B: WatchlistService에 성향 분석 메서드 추가
 
 ```python
-# src/domain/market_buzz/entities/buzz_score.py (수정)
-@dataclass
-class BuzzScore:
-    """종목별 관심도 점수 (프로필 적합도 포함)"""
-    ticker: str
-    name: str
-    base_score: float  # 기본 Buzz 점수 (0~100)
-    profile_fit_score: float  # 프로필 적합도 (0~100) ← NEW
-    final_score: float  # 종합 점수 (base_score * 0.6 + profile_fit * 0.4)
-    volume_ratio: float
-    volatility_ratio: float
-    heat_level: str
-    last_updated: datetime
+# src/services/watchlist_service.py (추가)
+class WatchlistService:
+    def __init__(
+        self,
+        watchlist_repo: IWatchlistRepository,
+        profile_repo: IProfileRepository,  # ← Phase 20
+        stock_collector: StockDataCollector
+    ):
+        self.watchlist_repo = watchlist_repo
+        self.profile_repo = profile_repo
+        self.stock_collector = stock_collector
+
+    def get_watchlist_with_profile_analysis(
+        self,
+        user_id: str
+    ) -> List[WatchlistSummary]:
+        """
+        관심 종목 + 투자 성향 적합도 분석
+
+        로직:
+        1. 관심 종목 조회
+        2. 사용자 프로필 로드
+        3. 각 종목의 변동성, 섹터 분석
+        4. 프로필 적합도 점수 계산
+        5. 경고 메시지 생성 (성향 불일치 시)
+        """
+        items = self.watchlist_repo.get_all(user_id)
+        profile = self.profile_repo.load(user_id)
+
+        summaries = []
+        for item in items:
+            # 기본 정보 조회
+            price_data = self._get_price_data(item.ticker)
+
+            # Phase 20 통합: 성향 적합도 계산
+            if profile:
+                fit_score = self._calculate_profile_fit(item.ticker, profile)
+                warning = self._generate_profile_warning(item.ticker, profile, fit_score)
+            else:
+                fit_score = None
+                warning = None
+
+            summary = WatchlistSummary(
+                item=item,
+                current_price=price_data['price'],
+                change_pct=price_data['change_pct'],
+                volume=price_data['volume'],
+                rsi=price_data['rsi'],
+                signal=self._generate_signal(price_data),
+                profile_fit_score=fit_score,  # ← NEW
+                profile_warning=warning  # ← NEW
+            )
+            summaries.append(summary)
+
+        return summaries
+
+    def _calculate_profile_fit(
+        self,
+        ticker: str,
+        profile: InvestorProfile
+    ) -> float:
+        """
+        Phase 20 프로필 기반 적합도 점수 계산
+
+        요소:
+        1. 변동성 적합도 (50점)
+        2. 섹터 선호도 (30점)
+        3. 위험 감수 레벨 매칭 (20점)
+        """
+        # 종목 정보 조회
+        stock_info = self._get_stock_info(ticker)
+        volatility = stock_info.get('volatility', 0.3)
+        sector = stock_info.get('sector', 'Unknown')
+
+        score = 0.0
+
+        # 1. 변동성 적합도
+        ideal_vol_min, ideal_vol_max = profile.get_ideal_volatility_range()
+        if ideal_vol_min <= volatility <= ideal_vol_max:
+            score += 50
+        else:
+            ideal_mid = (ideal_vol_min + ideal_vol_max) / 2
+            score += max(0, 50 - abs(volatility - ideal_mid) * 100)
+
+        # 2. 섹터 선호도
+        if sector in profile.preferred_sectors:
+            score += 30
+        else:
+            score += 10  # 기본 점수
+
+        # 3. 위험 감수 레벨
+        risk_value = profile.risk_tolerance.value
+        if risk_value <= 40 and volatility < 0.25:  # 안정형 + 저변동성
+            score += 20
+        elif risk_value > 60 and volatility > 0.35:  # 공격형 + 고변동성
+            score += 20
+        else:
+            score += 10
+
+        return min(100, score)
+
+    def _generate_profile_warning(
+        self,
+        ticker: str,
+        profile: InvestorProfile,
+        fit_score: float
+    ) -> Optional[str]:
+        """성향 불일치 경고 메시지 생성"""
+        if fit_score >= 60:
+            return None  # 적합도 높으면 경고 없음
+
+        stock_info = self._get_stock_info(ticker)
+        volatility = stock_info.get('volatility', 0.3)
+        risk_value = profile.risk_tolerance.value
+
+        # 안정형 투자자 + 고변동성 종목
+        if risk_value <= 40 and volatility > 0.35:
+            return f"⚠️ 이 종목은 변동성이 높아 {profile.profile_type} 투자자에게 적합하지 않을 수 있습니다."
+
+        # 공격형 투자자 + 저변동성 종목
+        if risk_value > 60 and volatility < 0.2:
+            return f"💡 이 종목은 안정적이지만 {profile.profile_type}에게는 수익률이 낮을 수 있습니다."
+
+        return None
 ```
 
 **추가 필요 작업**:
-- `profile_aware_buzz_service.py` 파일 생성
-- UI에 "내 성향에 맞는 Buzz" vs "전체 Buzz" 토글 추가
-- Phase 21.7: Phase 20 통합 단계 추가
+- Phase 1: `WatchlistSummary`에 `profile_fit_score`, `profile_warning` 필드 추가
+- Phase 3: `WatchlistService`에 `_calculate_profile_fit()` 메서드 구현
+- Phase 4: UI에 성향 적합도 표시 (색상 코드: 초록/노랑/빨강)
 
 ---
 
-### 2. 섹터별 데이터 집계 성능 이슈 (우선순위: ⭐⭐⭐⭐⭐)
+### 2. Phase 21 Market Buzz 연동 미정의 (우선순위: ⭐⭐⭐⭐)
 
 **문제**:
-- ✅ 섹터별 히트맵 기능 정의됨
-- ❌ **500개 종목(미국) / 2000개 종목(한국) 실시간 조회 시 성능 병목**
-- ❌ 첫 로드 시간 30초+ 예상 (사용자 경험 저하)
+- ✅ Watchlist 기본 기능은 정의됨
+- ❌ **Phase 21 Market Buzz와의 통합 방안 없음**
+- ❌ 관심 종목의 Buzz 점수 표시 로직 없음
+- ❌ 거래량 급증 알림 연동 없음
 
 **영향**:
-- 사용자가 탭 클릭 후 30초 대기 → 이탈률 증가
-- Streamlit 앱 전체가 블로킹될 수 있음
+- Phase 21에서 구축한 Market Buzz 기능이 활용되지 않음
+- 사용자가 관심 종목의 시장 관심도를 파악하기 어려움
+- 단순 가격/RSI만 표시 → 차별화 요소 부족
 
 **해결 방안**:
 
-#### Option A: 백그라운드 배치 업데이트 (강력 권장)
+#### Option A: WatchlistSummary에 Buzz 정보 추가
 
 ```python
-# scripts/update_sector_data_batch.py
-"""
-매일 장 마감 후 섹터별 데이터 미리 계산
-→ 사용자 접속 시 캐시에서 즉시 로드
-"""
-import schedule
-import time
-from src.services.market_buzz_service import MarketBuzzService
-from src.infrastructure.repositories.sector_repository import SectorRepository
+# src/domain/watchlist/entities/watchlist.py (수정)
+@dataclass
+class WatchlistSummary:
+    item: WatchlistItem
+    current_price: float
+    change_pct: float
+    volume: int
+    rsi: Optional[float]
+    signal: str
 
-def update_sector_heatmap():
-    """섹터 히트맵 데이터 사전 계산"""
-    print(f"[{datetime.now()}] Updating sector heatmap...")
+    # Phase 20 통합
+    profile_fit_score: Optional[float] = None
+    profile_warning: Optional[str] = None
 
-    sector_repo = SectorRepository()
-    buzz_service = MarketBuzzService(sector_repo)
-
-    # 미국 시장
-    us_heatmap = buzz_service.get_sector_heatmap(market="US")
-    buzz_service.cache_heatmap("US", us_heatmap)
-    print(f"  ✅ US sectors updated: {len(us_heatmap)} sectors")
-
-    # 한국 시장
-    kr_heatmap = buzz_service.get_sector_heatmap(market="KR")
-    buzz_service.cache_heatmap("KR", kr_heatmap)
-    print(f"  ✅ KR sectors updated: {len(kr_heatmap)} sectors")
-
-# 매일 오후 4시 (미국 장 마감), 오후 5시 (한국 장 마감) 실행
-schedule.every().day.at("16:00").do(update_sector_heatmap)  # US
-schedule.every().day.at("17:00").do(update_sector_heatmap)  # KR
-
-while True:
-    schedule.run_pending()
-    time.sleep(60)
+    # ===== Phase 21 통합 (NEW) =====
+    buzz_score: Optional[float] = None  # Market Buzz 점수 (0~100)
+    heat_level: Optional[str] = None  # "HOT" | "WARM" | "COLD"
+    volume_anomaly: bool = False  # 거래량 급증 여부
 ```
 
-**MarketBuzzService에 캐싱 메서드 추가**:
-```python
-class MarketBuzzService:
-    def __init__(self, sector_repo: SectorRepository):
-        self.sector_repo = sector_repo
-        self.collector = StockDataCollector()
-        self._heatmap_cache = {}  # {market: (data, timestamp)}
-        self._cache_ttl = 3600  # 1시간
-
-    def cache_heatmap(self, market: str, data: List[SectorHeat]):
-        """배치 작업에서 미리 계산한 데이터 저장"""
-        self._heatmap_cache[market] = (data, datetime.now())
-
-    def get_sector_heatmap(self, market: str = "KR") -> List[SectorHeat]:
-        """캐시 우선 조회, 없으면 실시간 계산"""
-        # 1. 캐시 확인
-        if market in self._heatmap_cache:
-            data, cached_time = self._heatmap_cache[market]
-            if (datetime.now() - cached_time).seconds < self._cache_ttl:
-                return data
-
-        # 2. 캐시 없으면 실시간 계산 (느림)
-        return self._calculate_sector_heatmap(market)
-```
-
-#### Option B: 점진적 로딩 (Lazy Loading)
+#### Option B: WatchlistService에 Buzz 분석 추가
 
 ```python
-# UI에서 초기 로딩 시 일부만 표시
-def _render_sector_heatmap():
-    st.subheader("📊 섹터 히트맵")
-
-    # 1단계: 주요 섹터 5개만 먼저 표시
-    major_sectors = ["Technology", "Healthcare", "Financials", "Energy", "Consumer"]
-    with st.spinner("주요 섹터 로딩 중..."):
-        initial_data = service.get_sector_heatmap_subset(sectors=major_sectors)
-        _render_heatmap(initial_data)
-
-    # 2단계: "전체 보기" 버튼 클릭 시 나머지 로드
-    if st.button("전체 섹터 보기"):
-        with st.spinner("전체 섹터 로딩 중..."):
-            full_data = service.get_sector_heatmap(market="KR")
-            _render_heatmap(full_data)
-```
-
-**권장 사항**:
-- **Phase 21.2.5**: 백그라운드 배치 스크립트 추가
-- **Phase 21.4.2**: UI 로딩 인디케이터 추가 (skeleton screen)
-
----
-
-### 3. 거래량 Threshold 하드코딩 문제 (우선순위: ⭐⭐⭐)
-
-**문제**:
-```python
-def detect_volume_anomalies(
-    self,
-    tickers: List[str],
-    threshold: float = 2.0  # ← 하드코딩된 값
-):
-```
-- ❌ **사용자가 민감도를 조정할 수 없음**
-- ❌ 시장 상황에 따라 적정 threshold가 다름 (급등장 vs 박스권)
-
-**해결 방안**:
-
-#### UI에서 동적 조정 가능하도록 개선
-
-```python
-# src/dashboard/views/market_buzz_view.py (수정)
-def render_market_buzz_tab():
-    st.subheader("🔥 Market Heat & Buzz")
-
-    # 민감도 슬라이더 추가
-    col1, col2 = st.columns([3, 1])
-    with col2:
-        threshold = st.slider(
-            "거래량 급증 민감도",
-            min_value=1.5,
-            max_value=5.0,
-            value=2.0,
-            step=0.5,
-            help="낮을수록 민감, 높을수록 보수적"
-        )
-
-    # 2. 거래량 급증 알림
-    anomalies = service.detect_volume_anomalies(
-        tickers=get_watch_list(),
-        threshold=threshold  # 사용자 설정값 사용
-    )
-    _render_volume_anomalies(anomalies)
-```
-
----
-
-### 4. 실시간 vs 배치 업데이트 전략 미정의 (우선순위: ⭐⭐⭐⭐)
-
-**문제**:
-- 문서에 "24시간 캐싱" 언급
-- ❌ **장중 실시간 업데이트 요구사항 고려 안 됨**
-- ❌ 사용자가 "새로고침" 버튼 클릭 시 동작 정의 없음
-
-**해결 방안**:
-
-#### Hybrid 전략 (권장)
-
-```python
-# src/services/market_buzz_service.py (수정)
-class MarketBuzzService:
-    def get_top_buzz_stocks(
+# src/services/watchlist_service.py (추가)
+class WatchlistService:
+    def __init__(
         self,
-        market: str,
-        top_n: int = 10,
-        force_refresh: bool = False  # ← NEW
-    ) -> List[BuzzScore]:
+        watchlist_repo: IWatchlistRepository,
+        profile_repo: IProfileRepository,
+        stock_collector: StockDataCollector,
+        market_buzz_service: MarketBuzzService  # ← Phase 21
+    ):
+        self.watchlist_repo = watchlist_repo
+        self.profile_repo = profile_repo
+        self.stock_collector = stock_collector
+        self.market_buzz_service = market_buzz_service
+
+    def get_watchlist_with_buzz(
+        self,
+        user_id: str
+    ) -> List[WatchlistSummary]:
         """
-        관심도 상위 종목 리스트
+        관심 종목 + Market Buzz 분석
 
-        업데이트 전략:
-        - force_refresh=False: 캐시 사용 (1시간 TTL)
-        - force_refresh=True: 실시간 재계산
+        로직:
+        1. 관심 종목 조회
+        2. 각 종목의 Buzz 점수 계산
+        3. 거래량 급증 감지
+        4. Heat Level 판정
         """
-        cache_key = f"buzz_stocks_{market}"
+        items = self.watchlist_repo.get_all(user_id)
 
-        # 캐시 확인
-        if not force_refresh and cache_key in self._cache:
-            cached_data, cached_time = self._cache[cache_key]
-            if (datetime.now() - cached_time).seconds < 3600:
-                return cached_data
+        summaries = []
+        for item in items:
+            # 기본 정보 조회
+            price_data = self._get_price_data(item.ticker)
 
-        # 실시간 계산
-        buzz_stocks = self._calculate_buzz_stocks(market, top_n)
-        self._cache[cache_key] = (buzz_stocks, datetime.now())
-        return buzz_stocks
+            # Phase 21 통합: Buzz 분석
+            try:
+                buzz = self.market_buzz_service.calculate_buzz_score(item.ticker)
+                buzz_score = buzz.base_score if buzz else None
+                heat_level = buzz.heat_level if buzz else None
+            except Exception as e:
+                logger.warning(f"Failed to get buzz for {item.ticker}: {e}")
+                buzz_score = None
+                heat_level = None
+
+            # 거래량 급증 감지
+            volume_anomaly = self._check_volume_anomaly(item.ticker)
+
+            summary = WatchlistSummary(
+                item=item,
+                current_price=price_data['price'],
+                change_pct=price_data['change_pct'],
+                volume=price_data['volume'],
+                rsi=price_data['rsi'],
+                signal=self._generate_signal(price_data),
+                buzz_score=buzz_score,  # ← NEW
+                heat_level=heat_level,  # ← NEW
+                volume_anomaly=volume_anomaly  # ← NEW
+            )
+            summaries.append(summary)
+
+        # Buzz 점수 높은 순으로 정렬 옵션
+        summaries.sort(key=lambda x: x.buzz_score or 0, reverse=True)
+
+        return summaries
 ```
 
-**UI에서 새로고침 버튼 추가**:
-```python
-# market_buzz_view.py (추가)
-col1, col2 = st.columns([4, 1])
-with col1:
-    st.subheader("🔥 관심 급상승 종목")
-with col2:
-    if st.button("🔄 새로고침", key="refresh_buzz"):
-        st.cache_data.clear()  # Streamlit 캐시 클리어
-        buzz_stocks = service.get_top_buzz_stocks(
-            market="KR",
-            force_refresh=True
-        )
-```
+**추가 필요 작업**:
+- Phase 1: `WatchlistSummary`에 `buzz_score`, `heat_level`, `volume_anomaly` 필드 추가
+- Phase 3: `WatchlistService`에 `MarketBuzzService` 의존성 주입
+- Phase 4: UI에 Buzz 뱃지 표시 (🔥 HOT / 🌤️ WARM / ❄️ COLD)
 
 ---
 
-### 5. 에러 처리 및 Fallback 로직 없음 (우선순위: ⭐⭐⭐⭐)
+### 3. 기존 "관심 종목 추가" 버튼 연동 구체화 부족 (우선순위: ⭐⭐⭐⭐)
 
 **문제**:
-- ❌ **yfinance API 실패 시 대응 방안 없음**
-- ❌ 일부 종목 데이터 누락 시 처리 로직 없음
-- ❌ KRX API 응답 지연/실패 시 Fallback 없음
+- ✅ `ranking_view.py`의 "관심 종목 추가" 버튼 존재 확인
+- ❌ **현재는 `process_feedback()`으로 추천 수락만 처리**
+- ❌ 실제 Watchlist DB에 저장하는 로직 없음
+- ❌ 통합 방안 명시되지 않음
 
 **영향**:
-- API 장애 시 전체 UI가 깨질 수 있음
+- 사용자가 "관심 종목 추가" 버튼을 눌러도 Watchlist에 나타나지 않음
+- 기능 간 연결 끊김 → 사용자 혼란
+
+**해결 방안**:
+
+#### ranking_view.py 수정
+
+```python
+# src/dashboard/views/ranking_view.py (수정)
+def _show_ranking_table(
+    ranked_stocks: List[RankedStock],
+    service: RecommendationService,
+    user_id: str
+):
+    """순위 테이블 표시"""
+    st.subheader("📋 상세 순위")
+
+    # WatchlistService import 추가
+    from src.services.watchlist_service import WatchlistService
+    from src.infrastructure.repositories.watchlist_repository import SQLiteWatchlistRepository
+
+    watchlist_service = WatchlistService(
+        watchlist_repo=SQLiteWatchlistRepository(),
+        profile_repo=service.profile_repo,  # 기존 repo 재사용
+        stock_collector=service._stock_ranking_service.collector  # 기존 collector 재사용
+    )
+
+    for stock in ranked_stocks:
+        with st.expander(f"**{stock.rank}위** {stock.stock_name} ({stock.ticker}) - {stock.composite_score:.1f}점"):
+            # ... 기존 코드 ...
+
+            # 피드백 버튼
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ 관심 종목 추가", key=f"accept_{stock.ticker}", use_container_width=True):
+                    # 1. 추천 수락 처리 (기존)
+                    recs = service.get_user_recommendations(user_id)
+                    for rec in recs:
+                        if rec.ticker == stock.ticker:
+                            service.process_feedback(user_id, rec.recommendation_id, "accept")
+                            break
+
+                    # 2. Watchlist에 추가 (NEW)
+                    try:
+                        watchlist_service.add_to_watchlist(
+                            user_id=user_id,
+                            ticker=stock.ticker,
+                            name=stock.stock_name
+                        )
+                        st.success(f"{stock.stock_name}을(를) 관심 종목에 추가했습니다!")
+                    except Exception as e:
+                        st.warning(f"관심 종목 추가 실패: {e}")
+```
+
+**추가 필요 작업**:
+- Phase 3: `WatchlistService.add_to_watchlist()` 구현
+- Phase 5: `ranking_view.py` 통합 테스트
+- Phase 5: 중복 추가 방지 로직 (exists() 체크)
+
+---
+
+### 4. 시장 구분 (KR/US) 처리 미정의 (우선순위: ⭐⭐⭐)
+
+**문제**:
+- ✅ 티커 저장은 정의됨
+- ❌ **한국/미국 종목 구분 로직 없음**
+- ❌ 시장별 필터링 기능 없음
+
+**영향**:
+- 한국/미국 종목이 섞여서 표시 → 사용자 혼란
+- 시장별 현재가 조회 로직 복잡도 증가
+
+**해결 방안**:
+
+#### WatchlistItem에 market 필드 추가
+
+```python
+# src/domain/watchlist/entities/watchlist.py (수정)
+@dataclass
+class WatchlistItem:
+    id: str
+    user_id: str
+    ticker: str
+    stock_name: str
+    market: str  # ← NEW: "KR" or "US"
+    added_at: datetime
+    notes: Optional[str] = None
+```
+
+#### WatchlistService에 시장 자동 판별
+
+```python
+# src/services/watchlist_service.py (추가)
+class WatchlistService:
+    def add_to_watchlist(
+        self,
+        user_id: str,
+        ticker: str,
+        name: str,
+        market: Optional[str] = None  # 명시하지 않으면 자동 판별
+    ) -> WatchlistItem:
+        """관심 종목 추가"""
+        # 시장 자동 판별
+        if market is None:
+            market = self._detect_market(ticker)
+
+        # 중복 체크
+        if self.watchlist_repo.exists(user_id, ticker):
+            raise ValueError(f"{name}은(는) 이미 관심 종목에 있습니다.")
+
+        # 추가
+        item = self.watchlist_repo.add_item(
+            user_id=user_id,
+            ticker=ticker,
+            name=name,
+            market=market  # ← NEW
+        )
+
+        return item
+
+    def _detect_market(self, ticker: str) -> str:
+        """티커에서 시장 자동 판별"""
+        if ticker.endswith('.KS') or ticker.endswith('.KQ'):
+            return 'KR'
+        elif '.' not in ticker or ticker.endswith('.US'):
+            return 'US'
+        else:
+            # yfinance로 조회하여 확인
+            try:
+                import yfinance as yf
+                stock = yf.Ticker(ticker)
+                exchange = stock.info.get('exchange', '')
+                if 'KRX' in exchange or 'KSE' in exchange or 'KOE' in exchange:
+                    return 'KR'
+                else:
+                    return 'US'
+            except:
+                return 'US'  # 기본값
+```
+
+**추가 필요 작업**:
+- Phase 1: `WatchlistItem`에 `market` 필드 추가
+- Phase 2: SQLite 테이블에 `market` 컬럼 추가
+- Phase 4: UI에 시장별 탭 또는 필터 추가
+
+---
+
+### 5. 성능 최적화 전략 부재 (우선순위: ⭐⭐⭐⭐)
+
+**문제**:
+- ❌ **다수 종목 동시 조회 시 성능 이슈**
+- ❌ yfinance API 호출 병렬화 방안 없음
+- ❌ 관심 종목 50개 이상 시 로딩 시간 문제
+
+**영향**:
+- 관심 종목 10개 → 약 10초 로딩 시간
 - 사용자 경험 저하
 
 **해결 방안**:
 
-#### Graceful Degradation 패턴
+#### Option A: 병렬 조회 (권장)
 
 ```python
-# src/services/market_buzz_service.py (개선)
-def get_sector_heatmap(self, market: str = "KR") -> List[SectorHeat]:
-    """섹터 히트맵 데이터 (에러 처리 포함)"""
-    try:
-        # 1. 캐시 확인
-        cached = self._get_cached_heatmap(market)
-        if cached:
-            return cached
+# src/services/watchlist_service.py (개선)
+import concurrent.futures
 
-        # 2. 실시간 계산
-        sectors = self.sector_repo.get_sectors(market)
-        heatmap = []
+class WatchlistService:
+    def get_watchlist_with_prices(
+        self,
+        user_id: str
+    ) -> List[WatchlistSummary]:
+        """관심 종목 조회 (병렬 처리)"""
+        items = self.watchlist_repo.get_all(user_id)
 
-        for sector_name, tickers in sectors.items():
-            try:
-                sector_heat = self._calculate_sector_heat(sector_name, tickers)
-                heatmap.append(sector_heat)
-            except Exception as e:
-                # 개별 섹터 실패는 로그만 남기고 계속 진행
-                logger.warning(f"Failed to calculate {sector_name}: {e}")
-                continue
+        # 병렬로 가격 데이터 조회
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_item = {
+                executor.submit(self._get_summary, item): item
+                for item in items
+            }
 
-        if not heatmap:
-            # 모든 섹터 계산 실패 시 빈 데이터 반환
-            logger.error(f"Failed to calculate any sector heatmap for {market}")
-            return []
+            summaries = []
+            for future in concurrent.futures.as_completed(future_to_item):
+                try:
+                    summary = future.result(timeout=10)
+                    summaries.append(summary)
+                except Exception as e:
+                    item = future_to_item[future]
+                    logger.error(f"Failed to get summary for {item.ticker}: {e}")
+                    # 에러 시 기본값 반환
+                    summaries.append(self._get_fallback_summary(item))
 
-        # 3. 캐싱
-        self._cache_heatmap(market, heatmap)
-        return heatmap
-
-    except Exception as e:
-        logger.error(f"Critical error in get_sector_heatmap: {e}")
-        # 최후의 수단: 이전 캐시 반환 (stale data)
-        return self._get_stale_cache(market) or []
+        return summaries
 ```
 
-**UI에서 에러 처리**:
+#### Option B: 캐싱 강화
+
 ```python
-# market_buzz_view.py (개선)
-def _render_sector_heatmap():
-    try:
-        with st.spinner("섹터 데이터 로딩 중..."):
-            heatmap = service.get_sector_heatmap(market="KR")
+# src/services/watchlist_service.py (개선)
+class WatchlistService:
+    def __init__(self, ...):
+        # ...
+        self._price_cache = {}  # {ticker: (data, timestamp)}
+        self._cache_ttl = 300  # 5분
 
-        if not heatmap:
-            st.warning("⚠️ 섹터 데이터를 불러올 수 없습니다. 잠시 후 다시 시도해주세요.")
-            return
+    def _get_price_data(self, ticker: str) -> dict:
+        """가격 데이터 조회 (캐싱)"""
+        # 캐시 확인
+        if ticker in self._price_cache:
+            data, cached_time = self._price_cache[ticker]
+            if (datetime.now() - cached_time).seconds < self._cache_ttl:
+                return data
 
-        _render_heatmap_chart(heatmap)
+        # 실시간 조회
+        data = self.stock_collector.get_current_price(ticker)
+        self._price_cache[ticker] = (data, datetime.now())
 
-    except Exception as e:
-        st.error(f"❌ 데이터 로딩 실패: {e}")
-        st.info("💡 새로고침을 시도하거나 잠시 후 다시 접속해주세요.")
+        return data
 ```
+
+**추가 필요 작업**:
+- Phase 3: `ThreadPoolExecutor` 병렬 처리 구현
+- Phase 3: 캐싱 레이어 강화
+- Phase 5: 성능 테스트 (50개 종목 로딩 시간 < 5초)
 
 ---
 
 ## 🟡 개선 권장 사항
 
-### 6. BuzzScore 계산 로직 구체화 필요 (우선순위: ⭐⭐⭐)
+### 6. UI 시각화 개선 (우선순위: ⭐⭐⭐)
 
-**현재 문서**:
-```python
-def calculate_buzz_score(self, ticker: str) -> BuzzScore:
-    """개별 종목 관심도 점수 계산"""
-    # 1. 20일 평균 거래량 대비 현재 거래량 비율
-    # 2. 20일 평균 변동성 대비 현재 변동성 비율
-    # 3. 두 비율을 결합하여 0~100 점수화
-```
-
-**개선안**:
-```python
-def calculate_buzz_score(self, ticker: str, period: int = 20) -> BuzzScore:
-    """
-    관심도 점수 계산 (0~100)
-
-    알고리즘:
-    1. 거래량 비율 점수 (50%)
-       - current_volume / avg_volume(20일)
-       - 2배 이상: 50점, 5배 이상: 100점 (선형 보간)
-
-    2. 변동성 비율 점수 (30%)
-       - current_volatility / avg_volatility(20일)
-       - 1.5배 이상: 30점, 3배 이상: 60점
-
-    3. 가격 변동 점수 (20%)
-       - abs(price_change_pct)
-       - 5% 이상: 10점, 10% 이상: 20점
-    """
-    df = self.collector.get_stock_data(ticker, period=f"{period+5}d")
-
-    if df is None or len(df) < period:
-        return None
-
-    # 1. 거래량 비율 (50점 만점)
-    current_volume = df['Volume'].iloc[-1]
-    avg_volume = df['Volume'].iloc[-period:-1].mean()
-    volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
-
-    # 2배=50점, 5배=100점 (선형 보간)
-    volume_score = min(50, (volume_ratio - 1) / 4 * 50)
-
-    # 2. 변동성 비율 (30점 만점)
-    current_vol = df['Close'].pct_change().iloc[-1].abs()
-    avg_vol = df['Close'].pct_change().iloc[-period:-1].abs().mean()
-    volatility_ratio = current_vol / avg_vol if avg_vol > 0 else 1.0
-
-    # 1.5배=15점, 3배=30점
-    volatility_score = min(30, (volatility_ratio - 1) / 2 * 30)
-
-    # 3. 가격 변동 (20점 만점)
-    price_change_pct = df['Close'].pct_change().iloc[-1] * 100
-    price_score = min(20, abs(price_change_pct) / 10 * 20)
-
-    # 종합 점수
-    final_score = volume_score + volatility_score + price_score
-
-    # HeatLevel 결정
-    if final_score >= 80:
-        heat_level = "HOT"
-    elif final_score >= 50:
-        heat_level = "WARM"
-    else:
-        heat_level = "COLD"
-
-    return BuzzScore(
-        ticker=ticker,
-        name=self._get_stock_name(ticker),
-        score=final_score,
-        volume_ratio=volume_ratio,
-        volatility_ratio=volatility_ratio,
-        heat_level=heat_level,
-        last_updated=datetime.now()
-    )
-```
-
----
-
-### 7. 섹터 매핑 데이터 소스 명확화 필요 (우선순위: ⭐⭐⭐⭐)
-
-**문제**:
-- 문서에 "KRX API 또는 FinanceDataReader" 양자택일로 제시
-- ❌ **구체적인 API 엔드포인트 없음**
-- ❌ 데이터 형식 예시 없음
-
-**해결 방안**:
-
-#### Option A: yfinance + 하드코딩 (빠른 MVP)
-
-```python
-# src/infrastructure/repositories/sector_repository.py
-class SectorRepository:
-    """섹터-종목 매핑 (MVP: 하드코딩 + yfinance)"""
-
-    # 한국 주요 종목 하드코딩 (KOSPI 시총 상위 50개)
-    KR_SECTOR_MAPPING = {
-        "Technology": [
-            "005930.KS",  # 삼성전자
-            "000660.KS",  # SK하이닉스
-            "035420.KS",  # NAVER
-            "035720.KS",  # 카카오
-            "006400.KS",  # 삼성SDI
-        ],
-        "Healthcare": [
-            "207940.KS",  # 삼성바이오로직스
-            "068270.KS",  # 셀트리온
-            "326030.KS",  # SK바이오팜
-        ],
-        "Financials": [
-            "105560.KS",  # KB금융
-            "055550.KS",  # 신한지주
-            "086790.KS",  # 하나금융지주
-        ],
-        # ... 추가
-    }
-
-    def get_sectors(self, market: str) -> Dict[str, List[str]]:
-        """섹터별 종목 리스트 반환"""
-        if market == "KR":
-            return self.KR_SECTOR_MAPPING
-        elif market == "US":
-            return self._fetch_us_sectors_cached()
-```
-
-#### Option B: FinanceDataReader 사용 (권장)
-
-```python
-import FinanceDataReader as fdr
-
-class SectorRepository:
-    def fetch_kr_sectors(self) -> Dict[str, List[str]]:
-        """KRX 업종별 종목 조회"""
-        # KOSPI 전체 종목
-        kospi = fdr.StockListing('KOSPI')
-
-        # Sector 컬럼으로 그룹화
-        sector_map = {}
-        for sector, group in kospi.groupby('Sector'):
-            if pd.notna(sector):
-                sector_map[sector] = group['Code'].tolist()
-
-        return sector_map
-```
-
-**추가 필요 작업**:
-- `requirements.txt`에 `finance-datareader` 추가
-- 섹터명 매핑 테이블 (영문 ↔ 한글)
-
----
-
-### 8. UI 시각화 라이브러리 명확화 (우선순위: ⭐⭐)
-
-**문제**:
-- 문서에 "Plotly Treemap" 언급
-- ❌ **구체적인 코드 예시 없음**
-- ❌ 색상 스케일, 크기 기준 불명확
+**현재 계획**:
+- 단순 테이블 형태
 
 **개선안**:
 
-```python
-# src/dashboard/views/market_buzz_view.py
-import plotly.express as px
+#### Plotly 차트 추가
 
-def _render_sector_heatmap(heatmap: List[SectorHeat]):
-    """Plotly Treemap으로 섹터 히트맵 렌더링"""
+```python
+# src/dashboard/views/watchlist_view.py (추가)
+import plotly.graph_objects as go
+
+def _render_watchlist_chart(summaries: List[WatchlistSummary]):
+    """관심 종목 등락률 차트"""
 
     # 데이터 준비
-    sectors = [h.sector_name for h in heatmap]
-    changes = [h.avg_change_pct for h in heatmap]
-    sizes = [h.stock_count for h in heatmap]  # 종목 수로 크기 결정
+    names = [s.item.stock_name for s in summaries]
+    changes = [s.change_pct for s in summaries]
+    colors = ['#4CAF50' if c > 0 else '#F44336' for c in changes]
 
-    # Treemap 생성
-    fig = px.treemap(
-        names=sectors,
-        parents=[""] * len(sectors),  # 최상위 레벨
-        values=sizes,
-        color=changes,
-        color_continuous_scale="RdYlGn",  # 빨강(하락) ~ 노랑 ~ 초록(상승)
-        color_continuous_midpoint=0,
-        title="📊 섹터별 등락률 히트맵"
-    )
-
-    fig.update_traces(
-        textinfo="label+value+percent parent",
-        textfont_size=14
-    )
+    # 바 차트
+    fig = go.Figure(data=[
+        go.Bar(
+            x=names,
+            y=changes,
+            marker_color=colors,
+            text=[f"{c:+.2f}%" for c in changes],
+            textposition='auto'
+        )
+    ])
 
     fig.update_layout(
-        height=500,
-        margin=dict(t=50, l=0, r=0, b=0)
+        title="📊 관심 종목 등락률",
+        xaxis_title="종목",
+        yaxis_title="등락률 (%)",
+        height=300,
+        showlegend=False
     )
 
-    # Streamlit 새 파라미터 사용
-    try:
-        st.plotly_chart(fig, key="sector_heatmap_main", width="stretch")
-    except TypeError:
-        st.plotly_chart(fig, key="sector_heatmap_main", use_container_width=True)
+    st.plotly_chart(fig, key="watchlist_chart", use_container_width=True)
+```
+
+---
+
+### 7. 정렬/필터링 옵션 추가 (우선순위: ⭐⭐⭐)
+
+**현재 계획**:
+- 정렬 옵션 없음
+
+**개선안**:
+
+```python
+# src/dashboard/views/watchlist_view.py (추가)
+def render_watchlist_view():
+    """관심 종목 뷰"""
+    st.subheader("⭐ 관심 종목")
+
+    # 정렬 옵션
+    col1, col2, col3 = st.columns([2, 1, 1])
+
+    with col1:
+        sort_by = st.selectbox(
+            "정렬 기준",
+            options=["추가일", "등락률", "Buzz 점수", "성향 적합도"],
+            key="watchlist_sort"
+        )
+
+    with col2:
+        sort_order = st.radio(
+            "순서",
+            options=["내림차순", "오름차순"],
+            horizontal=True,
+            key="watchlist_order"
+        )
+
+    with col3:
+        market_filter = st.selectbox(
+            "시장",
+            options=["전체", "🇰🇷 한국", "🇺🇸 미국"],
+            key="watchlist_market"
+        )
+
+    # 데이터 조회 및 정렬
+    summaries = service.get_watchlist_with_prices(user_id)
+
+    # 필터링
+    if market_filter == "🇰🇷 한국":
+        summaries = [s for s in summaries if s.item.market == 'KR']
+    elif market_filter == "🇺🇸 미국":
+        summaries = [s for s in summaries if s.item.market == 'US']
+
+    # 정렬
+    if sort_by == "등락률":
+        summaries.sort(key=lambda x: x.change_pct, reverse=(sort_order == "내림차순"))
+    elif sort_by == "Buzz 점수":
+        summaries.sort(key=lambda x: x.buzz_score or 0, reverse=(sort_order == "내림차순"))
+    elif sort_by == "성향 적합도":
+        summaries.sort(key=lambda x: x.profile_fit_score or 0, reverse=(sort_order == "내림차순"))
+    # ...
+```
+
+---
+
+### 8. 알림 기능 구체화 (우선순위: ⭐⭐)
+
+**현재 계획**:
+- "선택사항"으로만 명시
+
+**개선안**:
+
+```python
+# src/domain/watchlist/entities/watchlist.py (추가)
+@dataclass
+class PriceAlert:
+    """가격 알림 설정"""
+    id: str
+    watchlist_item_id: str
+    alert_type: str  # "target_price", "change_pct"
+    target_value: float  # 목표가 또는 변동률
+    is_active: bool
+    created_at: datetime
+
+# src/services/watchlist_service.py (추가)
+class WatchlistService:
+    def set_price_alert(
+        self,
+        user_id: str,
+        ticker: str,
+        alert_type: str,
+        target_value: float
+    ) -> PriceAlert:
+        """가격 알림 설정"""
+        # ...
+
+    def check_alerts(self, user_id: str) -> List[str]:
+        """알림 조건 체크 (배치 작업)"""
+        # ...
 ```
 
 ---
 
 ## 📊 수정된 구현 일정
 
-### 원래 일정: 6 Phase
-### 수정 일정: **8 Phase** (+33%)
+### 원래 일정: 4.5일
+### 수정 일정: **6일** (+33%)
 
 | Phase | 작업 내용 | 원래 | 수정 | 변경 사유 |
 |-------|----------|------|------|----------|
-| **Phase 21.1** | Domain Layer | 1일 | **1일** | - |
-| **Phase 21.2** | Infrastructure + **배치 스크립트** | 1일 | **2일** | 섹터 데이터 배치 업데이트 추가 |
-| **Phase 21.3** | Application Layer + **에러 처리** | 1일 | **1.5일** | Graceful degradation 구현 |
-| **Phase 21.4** | Presentation Layer | 1일 | **1.5일** | 로딩 인디케이터, 에러 UI 추가 |
-| **Phase 21.5** | app.py 통합 | 0.5일 | **0.5일** | - |
-| **Phase 21.6** | 테스트 작성 | 1일 | **1일** | - |
-| **Phase 21.7 (NEW)** | **Phase 20 프로필 연동** | - | **+1.5일** | ProfileAwareBuzzService 구현 |
-| **Phase 21.8 (NEW)** | **배치 스크립트 배포** | - | **+0.5일** | cron 설정, 모니터링 |
+| **Phase 1** | Domain Layer + **Phase 20/21 필드** | 1일 | **1.5일** | profile_fit, buzz_score 필드 추가 |
+| **Phase 2** | Infrastructure Layer + **market 컬럼** | 1일 | **1일** | - |
+| **Phase 3** | Service Layer + **Phase 20/21 통합** | 1일 | **2일** | Profile/Buzz 분석 로직 추가 |
+| **Phase 4** | UI Layer + **차트/필터링** | 1일 | **1일** | - |
+| **Phase 5** | 통합 테스트 + **성능 테스트** | 0.5일 | **0.5일** | 병렬 조회 성능 검증 |
 
-**총 소요 기간**: 8-9일
+**총 소요 기간**: 6일
 
 ---
 
@@ -1036,47 +922,46 @@ def _render_sector_heatmap(heatmap: List[SectorHeat]):
 ### Level 1: 단위 테스트 (추가)
 
 ```python
-# tests/unit/test_profile_aware_buzz.py (NEW)
-def test_profile_aware_filtering():
-    """투자 성향 기반 필터링 테스트"""
-    # 안정형 프로필
-    conservative_profile = InvestorProfile(
+# tests/unit/test_watchlist_service.py (NEW)
+def test_profile_fit_calculation():
+    """Phase 20 성향 적합도 계산 테스트"""
+    profile = InvestorProfile(
         user_id="test",
-        risk_tolerance=RiskTolerance(20),
-        ...
+        risk_tolerance=RiskTolerance(30),  # 안정형
+        preferred_sectors=["Technology"]
     )
 
-    service = ProfileAwareBuzzService(...)
-    buzz_stocks = service.get_personalized_buzz_stocks("test", market="KR")
+    service = WatchlistService(...)
 
-    # 변동성 높은 종목 제외 확인
-    for stock in buzz_stocks:
-        assert stock.volatility_ratio < 2.0
+    # 고변동성 종목 → 낮은 적합도
+    fit_score = service._calculate_profile_fit("TSLA", profile)
+    assert fit_score < 50
+
+    # 저변동성 + 선호 섹터 → 높은 적합도
+    fit_score = service._calculate_profile_fit("AAPL", profile)
+    assert fit_score > 70
 ```
 
-### Level 2: 성능 테스트 (NEW)
+### Level 2: 통합 테스트 (추가)
 
 ```python
-# tests/performance/test_sector_loading_time.py (NEW)
-import time
+# tests/integration/test_watchlist_ranking_integration.py (NEW)
+def test_ranking_to_watchlist_flow():
+    """ranking_view → watchlist 통합 테스트"""
+    # 1. 추천 종목 조회
+    recs = recommendation_service.generate_recommendations(profile)
 
-def test_sector_heatmap_loading_time():
-    """섹터 히트맵 로딩 시간 테스트 (캐시 사용)"""
-    service = MarketBuzzService(...)
+    # 2. 관심 종목 추가
+    watchlist_service.add_to_watchlist(
+        user_id="test",
+        ticker=recs[0].ticker,
+        name=recs[0].stock_name
+    )
 
-    # 첫 로드 (캐시 미스)
-    start = time.time()
-    heatmap = service.get_sector_heatmap(market="KR")
-    first_load_time = time.time() - start
-
-    # 두 번째 로드 (캐시 히트)
-    start = time.time()
-    heatmap2 = service.get_sector_heatmap(market="KR")
-    cached_load_time = time.time() - start
-
-    # 캐시 사용 시 10배 이상 빨라야 함
-    assert cached_load_time < first_load_time / 10
-    assert cached_load_time < 0.1  # 100ms 이내
+    # 3. Watchlist 조회
+    watchlist = watchlist_service.get_watchlist_with_prices("test")
+    assert len(watchlist) == 1
+    assert watchlist[0].item.ticker == recs[0].ticker
 ```
 
 ---
@@ -1085,41 +970,43 @@ def test_sector_heatmap_loading_time():
 
 ### 배포 전 필수 확인 사항
 
-- [ ] **데이터 소스 안정성**
-  - [ ] yfinance API Rate Limit 테스트
-  - [ ] KRX/FinanceDataReader 응답 시간 측정
-  - [ ] 배치 스크립트 정상 동작 확인
-
-- [ ] **성능**
-  - [ ] 섹터 히트맵 로딩 < 3초 (캐시 히트)
-  - [ ] Buzz 종목 조회 < 1초
-  - [ ] 배치 업데이트 완료 시간 < 10분
-
 - [ ] **Phase 20 통합**
-  - [ ] 프로필 기반 필터링 정확도 확인
+  - [ ] 성향 적합도 계산 정확도 확인
+  - [ ] 경고 메시지 표시 확인
   - [ ] 프로필 없는 사용자 Fallback 동작 확인
 
-- [ ] **모니터링**
-  - [ ] 배치 스크립트 실행 로그
-  - [ ] API 호출 실패율 추적
-  - [ ] 캐시 히트율 > 80%
+- [ ] **Phase 21 통합**
+  - [ ] Buzz 점수 표시 확인
+  - [ ] 거래량 급증 뱃지 확인
+  - [ ] Heat Level 색상 코드 확인
+
+- [ ] **성능**
+  - [ ] 10개 종목 로딩 < 3초
+  - [ ] 50개 종목 로딩 < 10초
+  - [ ] 병렬 조회 정상 동작
+
+- [ ] **기존 기능 연동**
+  - [ ] ranking_view "관심 종목 추가" 버튼 동작 확인
+  - [ ] 중복 추가 방지 확인
+  - [ ] 시장별 필터링 동작 확인
 
 ---
 
 ## 📌 최종 권장 사항
 
 ### 우선순위 P0 (즉시 반영)
-1. ✅ **Phase 20 프로필 연동** → ProfileAwareBuzzService 추가
-2. ✅ **배치 스크립트 구현** → 장 마감 후 자동 업데이트
-3. ✅ **에러 처리 강화** → Graceful degradation
+1. ✅ **Phase 20 프로필 연동** → `profile_fit_score`, `profile_warning` 추가
+2. ✅ **Phase 21 Buzz 연동** → `buzz_score`, `heat_level`, `volume_anomaly` 추가
+3. ✅ **ranking_view 통합** → `add_to_watchlist()` 호출 추가
+4. ✅ **시장 구분 처리** → `market` 필드 추가
 
-### 우선순위 P1 (Phase 21.3 전까지)
-4. ✅ **BuzzScore 계산 로직 구체화** → 명확한 점수 알고리즘
-5. ✅ **성능 테스트 추가** → 로딩 시간 검증
+### 우선순위 P1 (Phase 3 전까지)
+5. ✅ **성능 최적화** → 병렬 조회 구현
+6. ✅ **캐싱 강화** → 5분 TTL
 
-### 우선순위 P2 (Phase 21.6 이후)
-6. ✅ **UI 시각화 개선** → Treemap 상세 구현
-7. ✅ **배치 모니터링** → 실패 알림 시스템
+### 우선순위 P2 (Phase 4 이후)
+7. ✅ **UI 시각화 개선** → Plotly 차트
+8. ✅ **정렬/필터링 옵션** → 다양한 정렬 기준
 
 ---
 
@@ -1127,24 +1014,23 @@ def test_sector_heatmap_loading_time():
 
 **강점**:
 - ✅ Clean Architecture 설계 우수
-- ✅ Google Trends 의존성 제거로 안정성 향상
-- ✅ yfinance 기반 실현 가능성 높음
+- ✅ 기존 인프라 재사용 합리적
+- ✅ MVP 범위 적절
 
 **개선 필요**:
-- 🔴 **Phase 20 투자 성향 연동 추가** (ProfileAwareBuzzService)
-- 🔴 **배치 업데이트 전략 구현** (성능 병목 해결)
-- 🔴 **에러 처리 강화** (API 장애 대응)
-- 🟡 **BuzzScore 계산 로직 구체화**
-- 🟡 **섹터 데이터 소스 명확화** (FinanceDataReader 권장)
+- 🔴 **Phase 20 투자 성향 연동 추가** (profile_fit_score)
+- 🔴 **Phase 21 Market Buzz 연동 추가** (buzz_score, heat_level)
+- 🔴 **ranking_view 통합 구체화** (add_to_watchlist 호출)
+- 🔴 **시장 구분 처리** (market 필드)
+- 🟡 **성능 최적화** (병렬 조회)
 
 **수정 후 예상 효과**:
-- Phase 20 프로필 시스템과 완벽 통합
-- 배치 업데이트로 사용자 경험 향상 (로딩 시간 < 3초)
-- API 장애에도 안정적 동작 (Graceful degradation)
-- 개인화된 Buzz 추천으로 사용자 만족도 증가
+- Phase 20 프로필 시스템과 완벽 통합 → 개인화된 관심 종목 관리
+- Phase 21 Buzz 시스템 연동 → 시장 관심도 실시간 파악
+- ranking_view와 seamless 연동 → 사용자 경험 일관성
+- 병렬 조회로 성능 개선 → 로딩 시간 50% 단축
 
 ---
 
 **검토 완료일**: 2025-12-25
-**다음 단계**: Phase 21.1 착수 전 ProfileAwareBuzzService 설계 검토
-
+**다음 단계**: Phase 1 착수 전 Phase 20/21 통합 설계 검토

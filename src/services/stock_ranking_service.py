@@ -95,13 +95,19 @@ class StockRankingService:
         return self._ensemble_predictor
     
     def _get_data_collector(self):
-        """StockDataCollector 지연 로딩"""
+        """MarketDataService 지연 로딩 (Phase F 마이그레이션)"""
         if self._data_collector is None and self.use_ai_model:
             try:
-                from src.collectors.stock_collector import StockDataCollector
-                self._data_collector = StockDataCollector()
-            except Exception as e:
-                print(f"[WARNING] StockDataCollector 로드 실패: {e}")
+                # Phase F: MarketDataService 우선 사용
+                from src.services.market_data_service import MarketDataService
+                self._data_collector = MarketDataService(market="KR")
+            except ImportError:
+                # Fallback: 기존 StockDataCollector
+                try:
+                    from src.collectors.stock_collector import StockDataCollector
+                    self._data_collector = StockDataCollector()
+                except Exception as e:
+                    print(f"[WARNING] StockDataCollector 로드 실패: {e}")
         return self._data_collector
     
     def get_personalized_ranking(

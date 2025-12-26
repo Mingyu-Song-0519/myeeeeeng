@@ -72,15 +72,36 @@ class GeminiClient(ILLMClient):
             
             genai.configure(api_key=self.api_key)
             
-            # gemini-1.5-flash 사용 (무료, 빠름)
-            self.model = genai.GenerativeModel('gemini-1.5-flash')
+            # gemini-2.0-flash 사용 시도 (사용자 환경에서 확인된 최신 안정 모델)
+            try:
+                # 사용 가능한 모델 목록에서 가장 적합한 모델 찾기
+                available_models = [m.name.split('/')[-1] for m in genai.list_models() 
+                                  if 'generateContent' in m.supported_generation_methods]
+                
+                if 'gemini-2.0-flash' in available_models:
+                    model_name = 'gemini-2.0-flash'
+                elif 'gemini-2.0-flash-lite' in available_models:
+                    model_name = 'gemini-2.0-flash-lite'
+                elif 'gemini-flash-latest' in available_models:
+                    model_name = 'gemini-flash-latest'
+                else:
+                    # 목록에 없어도 시도해볼만한 기본값
+                    model_name = 'gemini-2.0-flash'
+                
+                self.model = genai.GenerativeModel(model_name)
+                logger.info(f"[GeminiClient] Selected model: {model_name}")
+            except Exception as e:
+                logger.warning(f"[GeminiClient] Model selection failed, using default: {e}")
+                self.model = genai.GenerativeModel('gemini-2.0-flash')
+                
             self._initialized = True
-            logger.info("[GeminiClient] Initialized successfully")
+            logger.info(f"[GeminiClient] Initialized successfully with model: {self.model.model_name}")
             
         except ImportError:
             logger.error("[GeminiClient] google-generativeai not installed")
         except Exception as e:
             logger.error(f"[GeminiClient] Init failed: {e}")
+            raise # 에러를 상위로 전파하여 UI에서 보이게 함
     
     def _load_api_key(self) -> Optional[str]:
         """API 키 로드 (Streamlit Secrets 또는 환경변수)"""
@@ -111,18 +132,35 @@ class GeminiClient(ILLMClient):
             raise RuntimeError("GeminiClient not initialized. Check API key.")
         
         try:
-            # 시스템 지시가 있으면 프롬프트 앞에 추가
-            full_prompt = prompt
+            import google.generativeai as genai
+            
+            # 시스템 지시가 변경되었을 경우 모델 재설정 (native support 사용)
             if system_instruction:
-                full_prompt = f"{system_instruction}\n\n---\n\n{prompt}"
+                model_name = self.model.model_name.split('/')[-1]
+                model = genai.GenerativeModel(
+                    model_name=model_name,
+                    system_instruction=system_instruction
+                )
+            else:
+                model = self.model
             
-            response = self.model.generate_content(full_prompt)
+            response = model.generate_content(prompt)
             
+            # 응답이 비어있거나 차단된 경우 처리
+            if not response or not hasattr(response, 'text'):
+                # candidate 피드백 확인
+                if response.candidates and response.candidates[0].finish_reason:
+                    reason = response.candidates[0].finish_reason
+                    logger.warning(f"[GeminiClient] Blocked: {reason}")
+                    return f"죄송합니다. 서비스 정책상 답변을 드릴 수 없습니다. (사유: {reason})"
+                return "AI가 응답을 생성하지 못했습니다."
+                
             return response.text
             
         except Exception as e:
             logger.error(f"[GeminiClient] Generation failed: {e}")
             raise
+
     
     def is_available(self) -> bool:
         """서비스 사용 가능 여부 확인"""

@@ -13,6 +13,10 @@ from src.services.factor_analysis_service import FactorAnalyzer, FactorScreener
 from src.services.social_trend_service import GoogleTrendsAnalyzer, SocialTrendAnalyzer
 from src.services.regime_classification_service import RegimeClassifier, RegimeAwareModelSelector
 
+# Phase F: 신규 서비스 (System Improvement)
+from src.services.market_data_service import MarketDataService
+from src.services.feature_engineering_service import FeatureEngineeringService
+
 __all__ = [
     # Core Services
     "TradingSignalService", 
@@ -31,5 +35,10 @@ __all__ = [
     "GoogleTrendsAnalyzer",
     "SocialTrendAnalyzer",
     "RegimeClassifier",
-    "RegimeAwareModelSelector"
+    "RegimeAwareModelSelector",
+    
+    # Phase F: System Improvement
+    "MarketDataService",
+    "FeatureEngineeringService"
 ]
+

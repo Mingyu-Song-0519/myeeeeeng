@@ -30,12 +30,13 @@ class SentimentFeatureIntegrator:
     내부적으로 SentimentAnalysisService를 호출하는 Wrapper입니다.
     """
     
-    def __init__(self, ticker: str, stock_name: str = None, market: str = "KR"):
+    def __init__(self, ticker: str, stock_name: str = None, market: str = "KR", use_llm: bool = False):
         """
         Args:
             ticker: 종목 코드
             stock_name: 종목 이름
             market: 시장 코드 ("KR" 또는 "US")
+            use_llm: Gemini LLM 감성 분석 사용 여부 (Phase F)
         """
         warnings.warn(
             "SentimentFeatureIntegrator is deprecated. "
@@ -47,11 +48,13 @@ class SentimentFeatureIntegrator:
         self.ticker = ticker
         self.stock_name = stock_name
         self.market = market
+        self.use_llm = use_llm
         
-        # 새 Service Layer 초기화
+        # 새 Service Layer 초기화 (Phase F: use_llm 전달)
         self._service = SentimentAnalysisService(
             news_collector=NewsCollector(),
-            sentiment_analyzer=SentimentAnalyzer()
+            sentiment_analyzer=SentimentAnalyzer(use_llm=use_llm),
+            use_llm=use_llm
         )
     
     def get_sentiment_features(self, lookback_days: int = 7) -> Dict:
@@ -100,12 +103,16 @@ def create_enhanced_features(
     ticker: str,
     stock_name: str = None,
     market: str = "KR",
-    include_sentiment: bool = True
+    include_sentiment: bool = True,
+    use_llm: bool = False
 ) -> Tuple[pd.DataFrame, List[str]]:
     """
     [DEPRECATED] 기술적 지표 + 감성 분석 통합 피처 생성
     
     하위 호환성을 위한 Wrapper 함수입니다.
+    
+    Args:
+        use_llm: Gemini LLM 감성 분석 사용 여부 (Phase F)
     """
     # 기본 기술적 지표 컬럼
     base_features = [
@@ -128,8 +135,9 @@ def create_enhanced_features(
     
     # 감성 피처 추가
     if include_sentiment:
-        print(f"[INFO] 감성 분석 피처 수집 중... ({stock_name or ticker})")
-        integrator = SentimentFeatureIntegrator(ticker, stock_name, market)
+        llm_msg = " (🧠 Gemini LLM)" if use_llm else ""
+        print(f"[INFO] 감성 분석 피처 수집 중... ({stock_name or ticker}){llm_msg}")
+        integrator = SentimentFeatureIntegrator(ticker, stock_name, market, use_llm=use_llm)
         sentiment_features = integrator.get_sentiment_features()
         
         df = integrator.add_sentiment_to_dataframe(df, sentiment_features)

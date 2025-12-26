@@ -26,6 +26,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from config import DEFAULT_TICKERS, US_TICKERS, DASHBOARD_CONFIG, ENSEMBLE_CONFIG, MARKET_CONFIG, EXCHANGE_RATE_CONFIG
 from src.collectors.stock_collector import StockDataCollector
 from src.collectors.multi_stock_collector import MultiStockCollector
+
+# Phase F: New MarketDataService with caching and fallback
+try:
+    from src.services.market_data_service import MarketDataService
+    from src.services.feature_engineering_service import FeatureEngineeringService
+    MARKET_SERVICE_AVAILABLE = True
+except ImportError:
+    MARKET_SERVICE_AVAILABLE = False
 from src.collectors.news_collector import NewsCollector
 from src.analyzers.technical_analyzer import TechnicalAnalyzer
 from src.utils.hints import get_hint_text, INDICATOR_HINTS
@@ -57,6 +65,20 @@ try:
     AI_ANALYSIS_AVAILABLE = True
 except ImportError:
     AI_ANALYSIS_AVAILABLE = False
+
+# Phase C: AI 스크리너 뷰
+try:
+    from src.dashboard.views.screener_view import render_morning_picks
+    SCREENER_AVAILABLE = True
+except ImportError:
+    SCREENER_AVAILABLE = False
+
+# Phase D: AI 챗봇
+try:
+    from src.dashboard.components.sidebar_chat import render_sidebar_chat
+    CHATBOT_AVAILABLE = True
+except ImportError:
+    CHATBOT_AVAILABLE = False
 
 
 def setup_page():
@@ -121,10 +143,31 @@ def setup_page():
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_cached_stock_data(ticker: str, period: str) -> pd.DataFrame:
-    """주식 데이터 수집 (캐싱 적용, 1시간)"""
+    """주식 데이터 수집 (MarketDataService + 캐싱 적용)"""
     try:
-        collector = StockDataCollector()
-        return collector.fetch_stock_data(ticker, period)
+        # Phase F: MarketDataService 우선 사용 (Fallback + SQLite 캐싱)
+        if MARKET_SERVICE_AVAILABLE:
+            market = st.session_state.get('current_market', 'KR')
+            service = MarketDataService(market=market)
+            ohlcv = service.get_ohlcv(ticker, period=period)
+            df = ohlcv.to_dataframe()
+            
+            # 차트 호환성: index를 date 컬럼으로 변환
+            if 'date' not in df.columns:
+                df = df.reset_index()
+                # 컬럼명 정규화 (Date, index 등 → date)
+                if 'Date' in df.columns:
+                    df = df.rename(columns={'Date': 'date'})
+                elif 'index' in df.columns:
+                    df = df.rename(columns={'index': 'date'})
+                elif df.columns[0] != 'date':
+                    df = df.rename(columns={df.columns[0]: 'date'})
+            
+            return df
+        else:
+            # Fallback: 기존 StockDataCollector
+            collector = StockDataCollector()
+            return collector.fetch_stock_data(ticker, period)
     except Exception as e:
         st.error(f"데이터 수집 오류: {e}")
         return pd.DataFrame()
@@ -1168,14 +1211,40 @@ def display_ai_prediction():
         start_save = st.checkbox("💾 학습된 모델 저장", value=True, 
                                  disabled=use_saved_model,
                                  help="새로 학습한 모델을 저장하여 나중에 재사용합니다.")
+    
+    # Phase F: LLM 감성 분석 옵션 (감성 분석 활성화 시에만 표시)
+    use_llm_sentiment = False
+    if use_sentiment:
+        use_llm_sentiment = st.checkbox(
+            "🧠 Gemini LLM 감성 분석", 
+            value=False,
+            help="Gemini AI를 활용한 고급 감성 분석을 사용합니다. API 키 필요."
+        )
 
     if st.button("🚀 예측 실행", type="primary"):
         with st.status("🚀 AI 심층 분석 진행 중...", expanded=True) as status:
             status.write("📊 시장 데이터 수집 중...")
             try:
-                # 데이터 수집
-                collector = StockDataCollector()
-                df = collector.fetch_stock_data(ticker_code, period=period)
+                # Phase F: MarketDataService 우선 사용 (Fallback + 캐싱)
+                if MARKET_SERVICE_AVAILABLE:
+                    market = st.session_state.get('current_market', 'KR')
+                    service = MarketDataService(market=market)
+                    ohlcv = service.get_ohlcv(ticker_code, period=period)
+                    df = ohlcv.to_dataframe()
+                    
+                    # 차트 호환성: index를 date 컬럼으로 변환
+                    if 'date' not in df.columns:
+                        df = df.reset_index()
+                        if 'Date' in df.columns:
+                            df = df.rename(columns={'Date': 'date'})
+                        elif 'index' in df.columns:
+                            df = df.rename(columns={'index': 'date'})
+                        elif df.columns[0] != 'date':
+                            df = df.rename(columns={df.columns[0]: 'date'})
+                else:
+                    # Fallback: 기존 StockDataCollector
+                    collector = StockDataCollector()
+                    df = collector.fetch_stock_data(ticker_code, period=period)
 
                 if df.empty:
                     st.error("데이터를 가져올 수 없습니다")
@@ -1189,14 +1258,17 @@ def display_ai_prediction():
                 # 감성 분석 피처 통합 (옵션)
                 feature_cols = None
                 if use_sentiment:
-                    st.info("📰 뉴스 감성 분석 중...")
+                    llm_msg = " (🧠 Gemini LLM)" if use_llm_sentiment else ""
+                    st.info(f"📰 뉴스 감성 분석 중...{llm_msg}")
                     try:
                         from src.models.sentiment_feature_integrator import create_enhanced_features
                         current_market = st.session_state.get('current_market', 'KR')
                         df, feature_cols = create_enhanced_features(
-                            df, ticker_code, ticker_name, current_market, include_sentiment=True
+                            df, ticker_code, ticker_name, current_market, 
+                            include_sentiment=True,
+                            use_llm=use_llm_sentiment  # Phase F: Gemini LLM 옵션
                         )
-                        st.success(f"✅ 감성 피처 {len([c for c in feature_cols if 'sentiment' in c])}개 추가됨")
+                        st.success(f"✅ 감성 피처 {len([c for c in feature_cols if 'sentiment' in c])}개 추가됨{llm_msg}")
                     except Exception as e:
                         st.warning(f"감성 분석 생략: {str(e)}")
 
@@ -2352,9 +2424,14 @@ def main():
                 display_risk_management_mini(panel_id)
             elif tab_idx == 8:
                 if INVESTMENT_PROFILE_AVAILABLE:
-                    render_investment_profile_tab()
+                    render_investment_profile_tab() # Assuming mini version is not needed or handled internally
                 else:
                     st.warning("투자 성향 모듈을 불러올 수 없습니다.")
+            elif tab_idx == 9: # Added AI Screener rendering for split mode
+                if SCREENER_AVAILABLE:
+                    render_morning_picks_mini(panel_id) # Assuming a mini version for split mode
+                else:
+                    st.warning("AI 스크리너 모듈을 불러올 수 없습니다.")
         
         with col_left:
             render_panel("left", st.session_state.split_left_tab)
@@ -2382,7 +2459,8 @@ def main():
             "🏥 시장 체력 진단",
             "🔥 Market Buzz",
             "💎 팩터 투자",
-            "👤 투자 성향"
+            "👤 투자 성향",
+            "🌅 AI 스크리너"
         ]
         default_tab = "📊 단일 종목 분석"
     else:
@@ -2400,17 +2478,29 @@ def main():
             "🏥 시장 체력 진단",
             "🔥 Market Buzz",
             "💎 팩터 투자",
-            "👤 투자 성향"
+            "👤 투자 성향",
+            "🌅 AI 스크리너"
         ]
         default_tab = "📊 단일 종목 분석"
+    
+    # Phase E: 챗봇에서 탭 전환 요청이 있으면 해당 탭을 default로 설정
+    if 'pending_tab' in st.session_state:
+        pending = st.session_state.pending_tab
+        if pending in tab_options:
+            default_tab = pending
+        del st.session_state.pending_tab
     
     selected_tab = st.segmented_control(
         "분석 메뉴",
         tab_options,
         default=default_tab,
-        key="main_tab_select"
+        selection_mode="single",
+        label_visibility="collapsed"
     )
-    st.session_state.current_tab = selected_tab
+
+    
+    # Phase D: 챗봇 Context 추적을 위해 현재 탭 저장
+    st.session_state.active_tab_name = selected_tab
     
     # 사이드바: 현재 탭에 따라 다르게 표시
     with st.sidebar:
@@ -2488,6 +2578,10 @@ def main():
             # 기타 탭 - 간단한 시장 표시만
             market_label = "🇰🇷 한국" if current_market == "KR" else "🇺🇸 미국"
             st.info(f"현재 시장: {market_label}")
+        
+        # Phase D: AI 챗봇 (모든 탭에서 항상 표시)
+        if CHATBOT_AVAILABLE:
+            render_sidebar_chat()
     # 탭 콘텐츠 렌더링
     if selected_tab == "🔴 실시간 시세" and current_market == "KR":
         display_realtime_data()
@@ -2668,6 +2762,12 @@ def main():
                 render_ranking_tab()
         else:
             st.error("투자 성향 모듈을 로드할 수 없습니다.")
+    
+    elif selected_tab == "🌅 AI 스크리너":
+        if SCREENER_AVAILABLE:
+            render_morning_picks()
+        else:
+            st.warning("AI 스크리너 모듈을 불러올 수 없습니다.")
 
 
 def display_portfolio_optimization():

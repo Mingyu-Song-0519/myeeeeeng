@@ -1,6 +1,7 @@
 """
 Market Buzz Service - Application Layer
 시장 관심도 분석 핵심 비즈니스 로직
+Phase F: MarketDataService 마이그레이션
 
 Features:
 - Buzz Score 계산 (거래량 + 변동성 기반)
@@ -20,6 +21,15 @@ from src.domain.market_buzz.entities.volume_anomaly import VolumeAnomaly
 from src.domain.market_buzz.entities.sector_heat import SectorHeat
 from src.domain.market_buzz.value_objects.heat_level import HeatLevel
 from src.infrastructure.repositories.sector_repository import SectorRepository
+
+# Phase F: MarketDataService 우선 사용
+try:
+    from src.services.market_data_service import MarketDataService
+    MARKET_SERVICE_AVAILABLE = True
+except ImportError:
+    MARKET_SERVICE_AVAILABLE = False
+    MarketDataService = None
+
 from src.collectors.stock_collector import StockDataCollector
 
 logger = logging.getLogger(__name__)
@@ -40,6 +50,12 @@ class MarketBuzzService:
             sector_repo: 섹터 저장소 (DI)
         """
         self.sector_repo = sector_repo
+        
+        # Phase F: MarketDataService 우선 사용
+        if MARKET_SERVICE_AVAILABLE:
+            self._market_service = MarketDataService(market="KR")
+        else:
+            self._market_service = None
         self.collector = StockDataCollector()
         
         # 캐싱

@@ -580,6 +580,148 @@ class EnsemblePredictor:
         self.weights = weights
         print(f"[INFO] 가중치 업데이트: {weights}")
 
+    def auto_adjust_weights(
+        self, 
+        validation_results: Dict[str, float],
+        method: str = 'performance',
+        min_weight: float = 0.1,
+        smoothing: float = 0.3
+    ) -> Dict[str, float]:
+        """
+        최근 예측 성능 기반 가중치 동적 조정
+        
+        Args:
+            validation_results: 각 모델의 성능 점수 {'lstm': 0.75, 'xgboost': 0.80, ...}
+            method: 조정 방법 ('performance', 'softmax', 'ema')
+            min_weight: 최소 가중치 (너무 낮아지지 않도록)
+            smoothing: EMA 스무딩 팩터 (0~1)
+            
+        Returns:
+            조정된 가중치 딕셔너리
+        """
+        if not validation_results:
+            print("[WARNING] 검증 결과가 없습니다. 기존 가중치 유지.")
+            return self.weights
+        
+        # 성능 점수가 0 이하인 모델 제외
+        valid_results = {k: max(v, 0.01) for k, v in validation_results.items()}
+        
+        if method == 'softmax':
+            # Softmax 방식: 성능 차이를 더 극대화
+            import math
+            exp_scores = {k: math.exp(v * 2) for k, v in valid_results.items()}
+            total_exp = sum(exp_scores.values())
+            new_weights = {k: v / total_exp for k, v in exp_scores.items()}
+            
+        elif method == 'ema':
+            # EMA 방식: 기존 가중치와 새 가중치를 혼합
+            total_score = sum(valid_results.values())
+            performance_weights = {k: v / total_score for k, v in valid_results.items()}
+            
+            new_weights = {}
+            for model in set(self.weights.keys()) | set(performance_weights.keys()):
+                old_w = self.weights.get(model, 0)
+                new_w = performance_weights.get(model, 0)
+                new_weights[model] = (1 - smoothing) * old_w + smoothing * new_w
+                
+        else:  # 'performance' (기본)
+            # 단순 성능 비례 방식
+            total_score = sum(valid_results.values())
+            new_weights = {k: v / total_score for k, v in valid_results.items()}
+        
+        # 최소 가중치 적용
+        for model in new_weights:
+            if new_weights[model] < min_weight:
+                new_weights[model] = min_weight
+        
+        # 정규화
+        total = sum(new_weights.values())
+        new_weights = {k: round(v / total, 4) for k, v in new_weights.items()}
+        
+        # 가중치 업데이트
+        old_weights = self.weights.copy()
+        self.weights = new_weights
+        
+        print(f"[INFO] 가중치 자동 조정:")
+        print(f"  이전: {old_weights}")
+        print(f"  이후: {new_weights}")
+        
+        return new_weights
+
+    def evaluate_models(
+        self,
+        df: pd.DataFrame,
+        feature_cols: Optional[List[str]] = None,
+        lookahead: int = 1
+    ) -> Dict[str, float]:
+        """
+        각 모델의 예측 성능 평가
+        
+        Args:
+            df: 평가용 데이터프레임
+            feature_cols: 특성 컬럼들
+            lookahead: 예측 기간 (일)
+            
+        Returns:
+            각 모델의 정확도 점수 {'lstm': 0.65, 'xgboost': 0.72, ...}
+        """
+        results = {}
+        
+        # 데이터 준비
+        if len(df) < 50:
+            print("[WARNING] 평가 데이터가 부족합니다.")
+            return results
+        
+        # 마지막 20% 데이터로 평가
+        split_idx = int(len(df) * 0.8)
+        test_df = df.iloc[split_idx:]
+        
+        # 실제 방향
+        if 'close' in test_df.columns:
+            actual_direction = (test_df['close'].shift(-lookahead) > test_df['close']).astype(int)
+            actual_direction = actual_direction.dropna()
+        else:
+            return results
+        
+        # LSTM 평가
+        if self.lstm_predictor is not None:
+            try:
+                pred = self.lstm_predictor.predict(test_df, feature_cols)
+                if pred is not None and 'predicted_direction' in pred:
+                    y_pred = pred['predicted_direction']
+                    if len(y_pred) == len(actual_direction):
+                        acc = (y_pred == actual_direction.values).mean()
+                        results['lstm'] = float(acc)
+            except Exception as e:
+                print(f"[WARNING] LSTM 평가 실패: {e}")
+        
+        # XGBoost 평가
+        if self.xgboost_classifier is not None:
+            try:
+                pred = self.xgboost_classifier.predict(test_df)
+                if pred is not None and 'predicted_direction' in pred:
+                    y_pred = pred['predicted_direction']
+                    if len(y_pred) == len(actual_direction):
+                        acc = (y_pred == actual_direction.values).mean()
+                        results['xgboost'] = float(acc)
+            except Exception as e:
+                print(f"[WARNING] XGBoost 평가 실패: {e}")
+        
+        # Transformer 평가
+        if self.transformer_predictor is not None:
+            try:
+                pred = self.transformer_predictor.predict(test_df, feature_cols)
+                if pred is not None and 'predicted_direction' in pred:
+                    y_pred = pred['predicted_direction']
+                    if len(y_pred) == len(actual_direction):
+                        acc = (y_pred == actual_direction.values).mean()
+                        results['transformer'] = float(acc)
+            except Exception as e:
+                print(f"[WARNING] Transformer 평가 실패: {e}")
+        
+        print(f"[INFO] 모델 평가 결과: {results}")
+        return results
+
 
 # 사용 예시
 if __name__ == "__main__":

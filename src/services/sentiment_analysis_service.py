@@ -1,5 +1,6 @@
 """
 Sentiment Analysis Service - Application Layer
+Phase F: LLMSentimentAnalyzer (Gemini) 통합
 
 Clean Architecture:
 - 감성 분석 유즈케이스 오케스트레이션
@@ -21,20 +22,29 @@ class SentimentAnalysisService:
     - 뉴스 수집 및 감성 분석 오케스트레이션
     - 감성 피처 생성 및 추출
     - DataFrame 통합
+    - Phase F: Gemini LLM 감성 분석 지원
     """
     
     def __init__(
         self,
         news_collector: Optional[NewsCollector] = None,
-        sentiment_analyzer: Optional[SentimentAnalyzer] = None
+        sentiment_analyzer: Optional[SentimentAnalyzer] = None,
+        use_llm: bool = False
     ):
         """
         Args:
             news_collector: 뉴스 수집기 (DI)
             sentiment_analyzer: 감성 분석기 (DI)
+            use_llm: Gemini LLM 감성 분석 사용 여부 (Phase F)
         """
         self.news_collector = news_collector or NewsCollector()
-        self.sentiment_analyzer = sentiment_analyzer or SentimentAnalyzer()
+        self.use_llm = use_llm
+        
+        # LLM 모드면 SentimentAnalyzer에도 전달
+        if sentiment_analyzer:
+            self.sentiment_analyzer = sentiment_analyzer
+        else:
+            self.sentiment_analyzer = SentimentAnalyzer(use_llm=use_llm)
     
     def get_sentiment_features(
         self,
@@ -150,13 +160,16 @@ class SentimentAnalysisService:
             return []
     
     def _analyze_sentiments(self, articles: List[Dict], market: str) -> np.ndarray:
-        """뉴스 리스트 감성 분석"""
+        """뉴스 리스트 감성 분석 (Phase F: LLM 지원)"""
         sentiments = []
         
         for article in articles:
             text = article.get('title', '') + ' ' + article.get('content', '')
             
-            if market == "US":
+            # Phase F: LLM 모드면 Gemini 사용
+            if self.use_llm and hasattr(self.sentiment_analyzer, 'analyze_text_llm'):
+                score = self.sentiment_analyzer.analyze_text_llm(text)
+            elif market == "US":
                 score = self.sentiment_analyzer.analyze_text_en(text)
             else:
                 score = self.sentiment_analyzer.analyze_text(text)

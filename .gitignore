@@ -1,58 +1,122 @@
-# 민감한 정보
+# ========================================
+# 민감한 정보 (API 키, 토큰, 비밀번호)
+# ========================================
 .env
-*.pyc
-__pycache__/
-*.db
-*.log
+.env.*
+*.pem
+*.key
 token.json
 *_token.json
 secrets.json
+secrets/
+credentials.json
+service_account.json
 
-# IDE
-.vscode/
-.idea/
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# ========================================
+# Python
+# ========================================
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
 
 # 가상환경
 venv/
 venv_tf/
 env/
+.venv/
 
-# 모델 파일 (배포용 제외)
-models/*.h5
-models/*.pkl
-*.weights.h5
-
-# 배포용 모델 파일 허용
-!src/models/saved_models/*.keras
-!src/models/saved_models/*.pkl
-
-# 데이터 (대용량)
+# ========================================
+# 데이터베이스 (개인 데이터)
+# ========================================
+*.db
+*.sqlite
+*.sqlite3
 data/*.csv
 data/*.db
+src/data/*.db
 
-# 캐시
-src/cache/
-.cache/
+# ========================================
+# 모델 파일 (대용량)
+# ========================================
+models/*.h5
+models/*.pkl
+models/*.keras
+*.weights.h5
+*.ckpt
+saved_models/
+
+# 배포용 모델 파일은 허용
+!src/models/saved_models/.gitkeep
+
+# ========================================
+# 캐시 및 로그
+# ========================================
+*.log
 *.cache
+.cache/
+src/cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# 이미지/예시 파일
-*.jpg
-*.png
-*.gif
-!docs/*.png
-!docs/*.jpg
+# ========================================
+# IDE 및 에디터
+# ========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-# Jupyter
+# ========================================
+# Jupyter Notebook
+# ========================================
 .ipynb_checkpoints/
+*.ipynb
 
-# OS
+# ========================================
+# OS 파일
+# ========================================
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Git
-.git/
+# ========================================
+# 이미지/미디어 (예시 파일)
+# ========================================
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.mp4
+*.webp
+!docs/*.png
+!docs/*.jpg
+!README_images/
 
+# ========================================
 # 기타
+# ========================================
 *.bak
 *.tmp
+*.temp
+error.txt
 heat map example.jpg
+
+# 테스트 관련
+test_*.db
+coverage/
+htmlcov/
+.coverage
+
+# Work plan (개발 문서, 선택적)
+# work_plan/
